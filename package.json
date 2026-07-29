@@ -1,0 +1,45 @@
+{
+  "name": "@flowkit/demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:api": "bun run src/api/main.ts",
+    "dev:worker": "bun run src/worker/main.ts",
+    "dev:notify": "bun run src/notifications/delivery.worker.ts",
+    "db:migrate": "bun run scripts/migrate.ts",
+    "db:seed": "bun run scripts/seed.ts",
+    "scenario": "bun run scripts/run-scenario.ts",
+    "test": "bun test test",
+    "test:integration": "bun test test/*.integration.test.ts",
+    "test:e2e": "bun test test/stack.e2e.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "stack:up": "docker compose -p flowkit_demo -f docker-compose.yml up --build --wait",
+    "stack:down": "docker compose -p flowkit_demo -f docker-compose.yml down",
+    "stack:reset": "bun run scripts/reset-stack.ts"
+  },
+  "dependencies": {
+    "@flowkit/auth": "file:../flowkit-auth",
+    "@flowkit/consumer": "file:../flowkit-consumer",
+    "@flowkit/core": "file:../flowkit-core",
+    "@flowkit/notify": "file:../flowkit-notify",
+    "@flowkit/tasks": "file:../flowkit-tasks",
+    "@flowkit/temporal": "file:../flowkit-temporal",
+    "@nestjs/common": "11.1.9",
+    "@nestjs/core": "11.1.9",
+    "@nestjs/platform-express": "11.1.9",
+    "@temporalio/client": "1.16.2",
+    "@temporalio/worker": "1.16.2",
+    "better-auth": "1.3.34",
+    "drizzle-orm": "^0.44.4",
+    "nodemailer": "^7.0.3",
+    "postgres": "^3.4.7",
+    "zod": "^3.25.42"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^22.0.0",
+    "typescript": "^5"
+  }
+}
