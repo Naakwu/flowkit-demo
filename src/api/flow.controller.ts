@@ -4,8 +4,10 @@ import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoun
 import { ZodError } from 'zod';
 
 import type { AuthenticatedPrincipal } from '@flowkit/auth';
+import type { FlowkitConsumerView } from '@flowkit/consumer';
 
 import { DemoSessionGuard } from '../auth/demo-session.guard';
+import type { LeaveRequestRow } from '../db/leave-flow.repository';
 import { FlowkitDemoConsumer, newLeaveFlowId } from '../flow/flowkit-demo.consumer';
 import { leaveRequestSchema } from '../leave/leave.types';
 import { asFlowkitHttpException } from './flowkit-http.errors';
@@ -33,7 +35,7 @@ export class FlowController {
         actor: { id: current.subjectId, roles: [current.role] },
         operationId: `${id}:start:${randomUUID()}`,
       });
-      return { id, flowId, ...request, state: state.state, sequence: state.sequence };
+      return await this.project(id, state);
     } catch (error) {
       if (error instanceof ZodError) throw new BadRequestException(error.flatten());
       throw asFlowkitHttpException(error);
@@ -44,18 +46,27 @@ export class FlowController {
   async get(@Param('id') id: string, @Req() req: SessionRequest) {
     const request = await this.requireVisibleRequest(id, req.principal);
     try {
-      const state = await this.consumer.getFlow(request.flow_id);
-      return {
-        ...request,
-        definitionHash: request.definition_hash,
-        state: state.state,
-        sequence: state.sequence,
-        nextActions: state.nextActions,
-        activities: await this.consumer.repository.listActivities(id),
-      };
+      return await this.project(id, await this.consumer.getFlow(request.flow_id), request);
     } catch (error) {
       throw asFlowkitHttpException(error);
     }
+  }
+
+  /**
+   * Every flow response uses one shape so the browser never has to know whether it created or
+   * reloaded the flow. Keys mirror the persisted projection row, not the parsed request body.
+   */
+  private async project(id: string, state: FlowkitConsumerView, known?: LeaveRequestRow) {
+    const request = known ?? await this.consumer.repository.getRequest(id);
+    if (!request) throw new NotFoundException('Flow not found.');
+    return {
+      ...request,
+      definitionHash: request.definition_hash,
+      state: state.state,
+      sequence: state.sequence,
+      nextActions: state.nextActions,
+      activities: await this.consumer.repository.listActivities(id),
+    };
   }
 
   @Post(':id/actions')

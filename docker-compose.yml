@@ -34,7 +34,7 @@ services:
       FLOWKIT_DEMO_ALLOW_SEED: "true"
       FLOWKIT_DEMO_MIGRATION_APPROVED: "true"
       DATABASE_URL: postgresql://flowkit_demo:flowkit_demo@postgres:5432/flowkit_demo
-      BETTER_AUTH_SECRET: flowkit-compose-secret-change-me-32-characters
+      BETTER_AUTH_SECRET: flowkit-demo-compose-secret-change-me-32chars
     depends_on: { postgres: { condition: service_healthy } }
     command: ["bun", "run", "db:migrate"]
   seed:
@@ -45,7 +45,7 @@ services:
       NODE_ENV: development
       FLOWKIT_DEMO_ALLOW_SEED: "true"
       DATABASE_URL: postgresql://flowkit_demo:flowkit_demo@postgres:5432/flowkit_demo
-      BETTER_AUTH_SECRET: flowkit-compose-secret-change-me-32-characters
+      BETTER_AUTH_SECRET: flowkit-demo-compose-secret-change-me-32chars
     depends_on: { migration: { condition: service_completed_successfully } }
     command: ["bun", "run", "db:seed"]
   api:
@@ -73,7 +73,7 @@ services:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: flowkit-demo
       TEMPORAL_TASK_QUEUE: flowkit-demo
-      BETTER_AUTH_SECRET: flowkit-compose-secret-change-me-32-characters
+      BETTER_AUTH_SECRET: flowkit-demo-compose-secret-change-me-32chars
     depends_on: { seed: { condition: service_completed_successfully }, temporal-namespace: { condition: service_completed_successfully } }
     command: ["bun", "run", "src/worker/main.ts"]
   notify:
@@ -84,7 +84,7 @@ services:
       NODE_ENV: development
       FLOWKIT_DEMO_PERSISTENCE: "true"
       DATABASE_URL: postgresql://flowkit_demo:flowkit_demo@postgres:5432/flowkit_demo
-      BETTER_AUTH_SECRET: flowkit-compose-secret-change-me-32-characters
+      BETTER_AUTH_SECRET: flowkit-demo-compose-secret-change-me-32chars
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
     depends_on: { seed: { condition: service_completed_successfully }, api: { condition: service_started }, mailpit: { condition: service_started } }
