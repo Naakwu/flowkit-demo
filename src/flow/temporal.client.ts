@@ -1,16 +1,13 @@
 import { Client, Connection } from '@temporalio/client';
 import type { FlowRuntime } from '@flowkit/consumer';
-import { createFlowkitTemporalRuntime, publishDefinition, verifyPublishedDefinition } from '@flowkit/temporal';
+import { createFlowkitTemporalRuntime } from '@flowkit/temporal';
 
 import { loadConfig } from '../config';
-import { leaveDefinition } from '../leave/leave.definition';
 import { leaveWorkflow } from '../worker/workflows';
 
 const config = loadConfig();
 const connection = Connection.lazy({ address: config.TEMPORAL_ADDRESS });
 const client = new Client({ connection, namespace: config.TEMPORAL_NAMESPACE });
-
-export const publishedLeaveDefinition = publishDefinition({ definition: leaveDefinition });
 
 export const leaveRuntime: FlowRuntime = createFlowkitTemporalRuntime({
   client,
@@ -27,8 +24,3 @@ export const leaveRuntime: FlowRuntime = createFlowkitTemporalRuntime({
     }
   },
 });
-
-export function verifyWorkflowInput() {
-  verifyPublishedDefinition(publishedLeaveDefinition);
-  return publishedLeaveDefinition;
-}

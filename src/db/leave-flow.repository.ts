@@ -1,16 +1,29 @@
-import type { FlowDefinition, FlowState } from '@flowkit/core';
+import { buildInitialState, type FlowDefinition, type FlowState } from '@flowkit/core';
 import { planNotification, NotificationAdapterRegistry, testAdapter, type NotificationDeliveryEnvelope } from '@flowkit/notify';
 import { planTaskProjection } from '@flowkit/tasks';
-import type { RecordTransitionInput, RecordTransitionOutput } from '@flowkit/temporal';
+import type { DispatchNotificationInput, RecordStageReadyInput, RecordTransitionInput, RecordTransitionOutput } from '@flowkit/temporal';
 import type { Sql, TransactionSql } from 'postgres';
 
 import { leaveDefinition } from '../leave/leave.definition';
+import type { LeaveRequest } from '../leave/leave.types';
 import { notificationTemplates } from '../notifications/templates';
 import { createDemoDatabaseClient } from './client';
 import { PostgresOutboxStore } from './postgres-outbox-store';
 import { PostgresTaskStore } from './postgres-task-store';
 
-type LeaveRequestRow = { id: string; employee_id: string; manager_id: string; stage: string; revision: number };
+export type LeaveRequestRow = {
+  id: string;
+  flow_id: string;
+  employee_id: string;
+  manager_id: string;
+  start_date: Date | string;
+  end_date: Date | string;
+  business_days: number;
+  reason: string;
+  balance_days: number;
+  stage: string;
+  revision: number;
+};
 type PriorTransitionRow = { metadata: { nextState?: FlowState } | string };
 
 export class LeaveFlowProjectionConflictError extends Error {
@@ -53,6 +66,75 @@ export class LeaveFlowRepository {
     `;
     const metadata = typeof row?.metadata === 'string' ? JSON.parse(row.metadata) : row?.metadata;
     return metadata?.nextState ? { state: metadata.nextState, created: false } : undefined;
+  }
+
+  async createRequest(input: { id: string; flowId: string; request: LeaveRequest; operationId: string; definitionHash: `sha256:${string}` }): Promise<void> {
+    const state = buildInitialState(this.definition);
+    await this.sql.begin(async (tx) => {
+      await tx`
+        INSERT INTO leave_requests (
+          id, employee_id, manager_id, start_date, end_date, business_days, reason,
+          balance_days, stage, revision, operation_key, flow_id, definition_hash
+        ) VALUES (
+          ${input.id}, ${input.request.employeeId}, ${input.request.managerId}, ${input.request.startDate},
+          ${input.request.endDate}, ${input.request.businessDays}, ${input.request.reason},
+          ${input.request.balanceDays}, ${state.stage}, 0, ${input.operationId}, ${input.flowId}, input.definitionHash
+        )
+        ON CONFLICT (id) DO NOTHING
+      `;
+      const plan = planTaskProjection({
+        namespace: 'flowkit-demo', flowId: input.flowId, subject: { type: 'leave', id: input.id },
+        definition: this.definition, operationId: input.operationId, transitionSequence: 0,
+        action: 'open', actorId: input.request.employeeId, previousState: state, nextState: state, metadata: {},
+      }, null);
+      await this.tasks.applyProjectionInTransaction(tx, { plan, operationId: input.operationId });
+    });
+  }
+
+  async getRequest(id: string): Promise<LeaveRequestRow | null> {
+    const [row] = await this.sql<LeaveRequestRow[]>`
+      SELECT id, flow_id, employee_id, manager_id, start_date, end_date, business_days, reason, balance_days, stage, revision
+      FROM leave_requests
+      WHERE id = ${id}
+      LIMIT 1
+    `;
+    return row ?? null;
+  }
+
+  async recordStageReady(input: RecordStageReadyInput): Promise<void> {
+    await this.sql`
+      INSERT INTO demo_runtime_state (state_key, state_value, updated_at)
+      VALUES (
+        ${`leave-stage-ready:${input.workflowId}`},
+        ${JSON.stringify({ stage: input.state.stage, entryEpoch: input.entryEpoch, slaDeadline: input.slaDeadline ?? null })}::jsonb,
+        now()
+      )
+      ON CONFLICT (state_key) DO UPDATE
+      SET state_value = EXCLUDED.state_value, updated_at = EXCLUDED.updated_at
+    `;
+  }
+
+  async dispatchNotification(input: DispatchNotificationInput): Promise<void> {
+    const request = await this.getRequest(input.subject.id);
+    if (!request) throw new Error('leave_not_found');
+    await this.outbox.insert(await this.notificationEnvelopes({
+      workflowId: input.subject.id,
+      runId: 'notification',
+      operationId: input.operationKey,
+      sequence: 0,
+      origin: 'rule',
+      definition: input.definition,
+      subject: input.subject,
+      command: { action: 'notify', actorId: 'system' },
+      previousState: { stage: request.stage, status: 'pending', pendingRole: null, tracks: {} },
+      nextState: { stage: request.stage, status: 'pending', pendingRole: null, tracks: {} },
+      transition: { action: 'notify', fromStage: request.stage, nextStage: request.stage, status: 'pending', pendingRole: null, trackUpdates: {} },
+      notify: {
+        template: input.notification.template,
+        channels: input.notification.channels.length > 0 ? input.notification.channels : ['inbox', 'email'],
+        to: input.notification.to,
+      },
+    }, request));
   }
 
   async recordTransition(input: RecordTransitionInput): Promise<RecordTransitionOutput> {
@@ -132,14 +214,15 @@ export class LeaveFlowRepository {
 
   private async notificationEnvelopes(input: RecordTransitionInput, request: LeaveRequestRow): Promise<NotificationDeliveryEnvelope[]> {
     if (!input.notify) return [];
+    const recipientId = input.notify.to?.includes('manager') ? request.manager_id : request.employee_id;
     const plan = await planNotification({
       namespace: 'flowkit-demo', sourceKey: `flowkit:${input.workflowId}:${input.operationId}`,
       aggregate: { type: 'leave', id: input.subject.id }, templateKey: input.notify.template,
       data: { requestId: input.subject.id, stage: input.nextState.stage, employeeName: request.employee_id },
       channels: input.notify.channels,
-      explicitRecipients: [{ key: request.employee_id, routes: input.notify.channels.map((channel) => ({
-        channel, canonicalKey: request.employee_id,
-        address: channel === 'email' ? `${request.employee_id}@example.test` : request.employee_id,
+      explicitRecipients: [{ key: recipientId, routes: input.notify.channels.map((channel) => ({
+        channel, canonicalKey: recipientId,
+        address: channel === 'email' ? `${recipientId}@example.test` : recipientId,
       })) }],
     }, { templates: notificationTemplates, adapters: this.adapters.values() });
     return plan.envelopes;
