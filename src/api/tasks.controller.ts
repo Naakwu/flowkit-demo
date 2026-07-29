@@ -1,28 +1,45 @@
-import { Controller, Get, Param, Post, Req } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 
-import { principalFromRequest } from '../auth/principal.adapters';
+import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
+
+import type { AuthenticatedPrincipal } from '@flowkit/auth';
+
+import { DemoSessionGuard } from '../auth/demo-session.guard';
 import { FlowkitDemoConsumer } from '../flow/flowkit-demo.consumer';
+import { asFlowkitHttpException } from './flowkit-http.errors';
+
+type SessionRequest = { principal: AuthenticatedPrincipal };
 
 @Controller('tasks')
+@UseGuards(DemoSessionGuard)
 export class TasksController {
   constructor(private readonly consumer: FlowkitDemoConsumer) {}
 
   @Get()
-  list(@Req() req: any) {
-    const user = req.user ?? principalFromRequest(req, { id: 'manager-1', role: 'manager' });
-    return this.consumer.tasks.list({ actor: { id: user.subjectId, roles: [user.role] } });
+  async list(@Req() req: SessionRequest) {
+    try {
+      return (await this.consumer.tasks.list({ actor: { id: req.principal.subjectId, roles: [req.principal.role] } })).items;
+    } catch (error) {
+      throw asFlowkitHttpException(error);
+    }
   }
 
   @Post(':id/claim')
-  async claim(@Param('id') id: string, @Req() req: any) {
-    const user = req.user ?? principalFromRequest(req, { id: 'manager-1', role: 'manager' });
+  async claim(@Param('id') id: string, @Body() body: { expectedRevision?: unknown } | undefined, @Req() req: SessionRequest) {
+    if (!Number.isInteger(body?.expectedRevision) || (body.expectedRevision as number) < 0) {
+      throw new BadRequestException('expectedRevision must be a non-negative integer.');
+    }
     const task = await this.consumer.repository.tasks.get(id);
-    if (!task) return { error: 'not_found' };
-    return this.consumer.tasks.claim({
-      taskId: task.id,
-      expectedRevision: task.revision,
-      actor: { id: user.subjectId, roles: [user.role] },
-      operationId: `claim:${task.id}:${user.subjectId}`,
-    });
+    if (!task) throw new NotFoundException('Task not found.');
+    try {
+      return await this.consumer.tasks.claim({
+        taskId: task.id,
+        expectedRevision: body.expectedRevision as number,
+        actor: { id: req.principal.subjectId, roles: [req.principal.role] },
+        operationId: `claim:${task.id}:${req.principal.subjectId}:${randomUUID()}`,
+      });
+    } catch (error) {
+      throw asFlowkitHttpException(error);
+    }
   }
 }

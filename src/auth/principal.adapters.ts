@@ -21,11 +21,3 @@ export async function resolveDemoActor(id: string): Promise<FlowkitActorRef> {
   if (!role) throw new Error('actor_not_found');
   return { id, roles: [role] };
 }
-
-export function principalFromRequest(request: { headers?: Record<string, string | string[] | undefined> }, fallback: { id: string; role: keyof typeof roleRegistry.definitions }): AuthenticatedPrincipal {
-  const headers = request.headers ?? {};
-  const header = (name: string) => { const value = headers[name] ?? headers[name.toLowerCase()]; return Array.isArray(value) ? value[0] : value; };
-  const id = header('x-demo-user') || fallback.id;
-  const role = canonicalRoles[id as keyof typeof canonicalRoles] ?? fallback.role;
-  return principal(id, role);
-}
