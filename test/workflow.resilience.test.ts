@@ -1,9 +1,16 @@
-import { describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, describe, expect, it } from 'bun:test';
+import { LeaveFlowRepository } from '../src/db/leave-flow.repository';
 import { LeaveService } from '../src/leave/leave.service';
+import { clearDurableLeaveServiceData, durableLeaveServiceDatabase } from './durable-test-database';
 
-describe('resilience boundaries', () => {
+const sql = await durableLeaveServiceDatabase('resilience boundaries');
+const durableTests = sql ? describe : describe.skip;
+afterEach(() => clearDurableLeaveServiceData(sql));
+afterAll(async () => { if (sql) await sql.end({ timeout: 5 }); });
+
+durableTests('resilience boundaries', () => {
   it('keeps task claim compare-and-set single-winner semantics', async () => {
-    const service = new LeaveService();
+    const service = new LeaveService(new LeaveFlowRepository({ sql: sql! }));
     const leave = await service.create({ managerId: 'manager-1', startDate: '2026-08-03', endDate: '2026-08-07', businessDays: 5, reason: 'Holiday', balanceDays: 10 }, 'employee-1');
     await service.command(leave.id, { action: 'submit' }, { id: 'employee-1', roles: ['employee'] });
     await service.command(leave.id, { action: 'require_manager' }, { id: 'system', roles: ['system'] });

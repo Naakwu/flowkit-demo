@@ -2,6 +2,11 @@ import postgres, { type Sql } from 'postgres';
 
 import { durableTestsEnabled, loadConfig } from '../src/config';
 
+const leaveServiceTables = [
+  'leave_requests', 'leave_transitions', 'flow_tasks', 'flow_task_events',
+  'flow_task_projection_operations', 'flow_task_invitations', 'notification_outbox', 'audit_events',
+];
+
 export async function durableTestDatabase(label: string, requiredTables: string[]): Promise<Sql | null> {
   if (!durableTestsEnabled()) {
     process.stderr.write(`Skipping ${label}: set FLOWKIT_DEMO_DURABLE_TESTS=true to enable durable database tests.\n`);
@@ -29,4 +34,20 @@ export async function durableTestDatabase(label: string, requiredTables: string[
     throw new Error(`${label} requires migrated tables: ${missing.join(', ')}.`);
   }
   return sql;
+}
+
+export function durableLeaveServiceDatabase(label: string): Promise<Sql | null> {
+  return durableTestDatabase(label, leaveServiceTables);
+}
+
+export async function clearDurableLeaveServiceData(sql: Sql | null): Promise<void> {
+  if (!sql) return;
+  await sql`DELETE FROM notification_outbox`;
+  await sql`DELETE FROM flow_task_invitations`;
+  await sql`DELETE FROM flow_task_projection_operations`;
+  await sql`DELETE FROM flow_task_events`;
+  await sql`DELETE FROM flow_tasks`;
+  await sql`DELETE FROM leave_transitions`;
+  await sql`DELETE FROM audit_events`;
+  await sql`DELETE FROM leave_requests`;
 }
