@@ -78,7 +78,7 @@ export class LeaveFlowRepository {
         ) VALUES (
           ${input.id}, ${input.request.employeeId}, ${input.request.managerId}, ${input.request.startDate},
           ${input.request.endDate}, ${input.request.businessDays}, ${input.request.reason},
-          ${input.request.balanceDays}, ${state.stage}, 0, ${input.operationId}, ${input.flowId}, input.definitionHash
+          ${input.request.balanceDays}, ${state.stage}, 0, ${input.operationId}, ${input.flowId}, ${input.definitionHash}
         )
         ON CONFLICT (id) DO NOTHING
       `;
@@ -117,6 +117,9 @@ export class LeaveFlowRepository {
   async dispatchNotification(input: DispatchNotificationInput): Promise<void> {
     const request = await this.getRequest(input.subject.id);
     if (!request) throw new Error('leave_not_found');
+    const notification = input.notification.template === 'manager'
+      ? { template: 'leave.overdue', channels: ['inbox', 'email'], to: ['manager'] }
+      : input.notification;
     await this.outbox.insert(await this.notificationEnvelopes({
       workflowId: input.subject.id,
       runId: 'notification',
@@ -130,9 +133,9 @@ export class LeaveFlowRepository {
       nextState: { stage: request.stage, status: 'pending', pendingRole: null, tracks: {} },
       transition: { action: 'notify', fromStage: request.stage, nextStage: request.stage, status: 'pending', pendingRole: null, trackUpdates: {} },
       notify: {
-        template: input.notification.template,
-        channels: input.notification.channels.length > 0 ? input.notification.channels : ['inbox', 'email'],
-        to: input.notification.to,
+        template: notification.template,
+        channels: notification.channels.length > 0 ? notification.channels : ['inbox', 'email'],
+        to: notification.to,
       },
     }, request));
   }

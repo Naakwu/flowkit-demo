@@ -4,7 +4,7 @@ import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 
 import { LeaveFlowRepository } from '../src/db/leave-flow.repository';
-import { createFlowkitDemoConsumer } from '../src/flow/flowkit-demo.consumer';
+import { createFlowkitDemoConsumer, publishedLeaveDefinition } from '../src/flow/flowkit-demo.consumer';
 import { createLeaveActivities } from '../src/worker/activities';
 import { leaveWorkflow } from '../src/worker/workflows';
 import { clearDurableLeaveServiceData, durableLeaveServiceDatabase } from './durable-test-database';
@@ -46,7 +46,7 @@ afterEach(() => clearDurableLeaveServiceData(sql));
 afterAll(async () => { if (sql) await sql.end({ timeout: 5 }); });
 
 durableTests('Flowkit demo consumer', () => {
-  it('routes multi-day leave to a manager task and rejects a decision by another manager', async () => {
+  it('persists the published definition hash, routes multi-day leave to a manager task, and rejects a decision by another manager', async () => {
     const environment = await TestWorkflowEnvironment.createLocal();
     const repository = new LeaveFlowRepository({ sql: sql! });
     const taskQueue = 'flowkit-demo';
@@ -67,6 +67,10 @@ durableTests('Flowkit demo consumer', () => {
 
     try {
       const flow = await consumer.start({ flowId: 'leave-1', subject: fiveDayLeave, actor: employee, operationId: 'start-1' });
+      const [request] = await sql!<{ definition_hash: string }[]>`
+        SELECT definition_hash FROM leave_requests WHERE id = ${fiveDayLeave.id}
+      `;
+      expect(request?.definition_hash).toBe(publishedLeaveDefinition.definitionHash);
       await consumer.act({ flowId: flow.id, action: 'submit', actor: employee, operationId: 'submit-1' });
       await eventually(async () => expect((await consumer.getFlow(flow.id)).state.stage).toBe('manager_review'));
       const [task] = (await consumer.tasks.list({ actor: manager1 })).items;

@@ -12,7 +12,7 @@ export const leaveDefinition: FlowDefinition = defineFlow({
       auto_approve: { to: 'fulfillment', kind: 'system' },
       require_manager: { to: 'manager_review', kind: 'system', notify: { template: 'leave.manager_review', channels: ['inbox', 'email'] } },
     } },
-    manager_review: { pendingRole: 'manager', sla: { after: 'PT10S', escalate: { notify: 'leave.overdue' } }, actions: {
+    manager_review: { pendingRole: 'manager', sla: { after: 'PT10S', escalate: { notify: 'manager' } }, actions: {
       approve: { to: 'fulfillment', kind: 'human', policy: 'managerReview', guards: ['managerTaskClaimed'] },
       reject: { to: 'rejected', kind: 'human', policy: 'managerReview', guards: ['managerTaskClaimed'], notify: { template: 'leave.rejected', channels: ['inbox', 'email'] } },
       return: { to: 'employee_draft', kind: 'human', policy: 'managerReview', guards: ['managerTaskClaimed'] },

@@ -31,7 +31,7 @@ export class LeaveService {
   }
 
   async listTasks() {
-    return this.tasks.list({ actor: { id: 'manager-1', roles: ['manager'] } });
+    return this.tasks.inbox({ view: 'role_queue', roles: ['manager'], statuses: ['open', 'claimed'] });
   }
 
   async listNotifications(recipientId: string) {
@@ -91,8 +91,9 @@ export class LeaveService {
     return this.tasks.claim({
       taskId: task.id,
       expectedRevision: task.revision,
-      actor: { id: actorId, roles: ['manager'] },
+      actorId,
       operationId: `claim:${task.id}:${actorId}`,
+      now: new Date().toISOString(),
     });
   }
 }
