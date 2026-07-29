@@ -95,7 +95,7 @@ class FakeConsumer {
     if (input.action === 'submit') {
       this.states.set(input.flowId, 'manager_review');
       const request = [...this.requests.values()].find((item) => item.flow_id === input.flowId)!;
-      this.task = { id: 'task-1', flowId: input.flowId, subjectId: request.id, stage: 'manager_review', role: 'manager', status: 'open', assigneeId: null, revision: 0 };
+      this.task = { id: 'task-1', flowId: input.flowId, subjectType: 'leave', subjectId: request.id, stage: 'manager_review', role: 'manager', status: 'open', assigneeId: null, revision: 0 };
     }
     if (input.action === 'approve') this.states.set(input.flowId, 'approved');
     return this.view(input.flowId);
@@ -151,7 +151,11 @@ beforeAll(async () => {
     ],
   })(TestModule);
   app = await NestFactory.create(TestModule, { logger: false });
-  await app.listen(0, '127.0.0.1');
+  // Bun's Node-compatible HTTP server does not support port zero in this
+  // test environment. A high ephemeral-range port keeps the API contract
+  // test independent of the demo's Compose port.
+  const port = 40_000 + Math.floor(Math.random() * 10_000);
+  await app.listen(port, '127.0.0.1');
   baseUrl = await app.getUrl();
 });
 

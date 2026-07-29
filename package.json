@@ -13,6 +13,7 @@
     "test": "bun test test",
     "test:integration": "bun test test/*.integration.test.ts",
     "test:e2e": "bun test test/stack.e2e.test.ts",
+    "test:browser": "playwright test -c playwright.config.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "stack:up": "docker compose -p flowkit_demo -f docker-compose.yml up --build --wait",
