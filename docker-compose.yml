@@ -58,6 +58,7 @@ services:
       FLOWKIT_DEMO_PERSISTENCE: "true"
       DATABASE_URL: postgresql://flowkit_demo:flowkit_demo@postgres:5432/flowkit_demo
       BETTER_AUTH_SECRET: flowkit-demo-compose-secret-change-me-32chars
+      MAILPIT_URL: ${FLOWKIT_DEMO_MAILPIT_URL:-http://localhost:8025}
     depends_on: { seed: { condition: service_completed_successfully }, temporal: { condition: service_started } }
     ports: ["${FLOWKIT_DEMO_API_PORT:-3011}:3011"]
     command: ["bun", "run", "src/api/main.ts"]

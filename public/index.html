@@ -98,9 +98,9 @@
 
         <div class="content-grid lower-grid">
           <section class="panel" id="notification-inbox"><div class="panel-head"><div><span class="eyebrow">IN-APP INBOX</span><h3>Notifications for this operator</h3></div><button class="button secondary small" id="refresh-notifications" type="button">Refresh</button></div><div id="notifications-list" class="empty-state"><span class="empty-icon">◌</span><strong>No inbox notifications</strong><p>Flowkit delivers transition notices here and to email.</p></div></section>
-          <section class="panel" id="runtime-panel"><div class="panel-head"><div><span class="eyebrow">OPERATIONAL STATUS</span><h3>Flowkit services</h3></div><span class="badge badge-neutral" id="runtime-status">CHECKING</span></div><div id="runtime-list" class="runtime-list"><p>Waiting for the first status check.</p></div><div class="panel-link"><a href="http://localhost:8025" target="_blank" rel="noreferrer">Open Mailpit email preview <span>↗</span></a></div></section>
+          <section class="panel" id="runtime-panel"><div class="panel-head"><div><span class="eyebrow">OPERATIONAL STATUS</span><h3>Flowkit services</h3></div><span class="badge badge-neutral" id="runtime-status">CHECKING</span></div><div id="runtime-list" class="runtime-list"><p>Waiting for the first status check.</p></div><div class="panel-link"><a id="mailpit-preview-link" data-mailpit-link href="#" target="_blank" rel="noreferrer">Open Mailpit email preview <span>↗</span></a></div></section>
         </div>
-        <footer><span>FLOWKIT REFERENCE CONSUMER · LEAVE APPROVAL</span><span><a href="/health/ready">API health</a> · <a href="http://localhost:8025" target="_blank" rel="noreferrer">Mailpit</a></span></footer>
+        <footer><span>FLOWKIT REFERENCE CONSUMER · LEAVE APPROVAL</span><span><a href="/health/ready">API health</a> · <a id="mailpit-footer-link" data-mailpit-link href="#" target="_blank" rel="noreferrer">Mailpit</a></span></footer>
       </main>
     </div>
     <div id="toast" class="toast" role="status" aria-live="polite"></div>

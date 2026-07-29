@@ -1,6 +1,7 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 
 import { DemoSessionGuard } from '../auth/demo-session.guard';
+import { loadConfig } from '../config';
 import { RuntimeHealthRepository } from '../db/runtime-health.repository';
 
 @Controller('runtime')
@@ -15,6 +16,7 @@ export class RuntimeController {
       this.health.health('delivery-worker'),
     ]);
     return {
+      mailpitUrl: loadConfig().MAILPIT_URL,
       flowkitRuntime: {
         ready: flowkitRuntime.ready,
         heartbeatAt: flowkitRuntime.heartbeatAt,

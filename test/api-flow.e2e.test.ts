@@ -137,6 +137,26 @@ async function login(baseUrl: string, userId: string): Promise<RequestClient> {
 let app: Awaited<ReturnType<typeof NestFactory.create>>;
 let baseUrl: string;
 
+function addressInUse(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'EADDRINUSE';
+}
+
+async function listenOnAvailablePort(target: { listen(port: number, host: string): Promise<unknown>; getUrl(): Promise<string> }): Promise<string> {
+  let lastError: unknown;
+  const firstPort = 40_000 + Math.floor(Math.random() * 10_000);
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const port = 40_000 + ((firstPort - 40_000 + attempt * 977) % 10_000);
+    try {
+      await target.listen(port, '127.0.0.1');
+      return target.getUrl();
+    } catch (error) {
+      lastError = error;
+      if (!addressInUse(error)) throw error;
+    }
+  }
+  throw lastError ?? new Error('Could not bind the HTTP test server to an available port.');
+}
+
 beforeAll(async () => {
   const consumer = new FakeConsumer();
   const sessions = new FakeSessions();
@@ -151,17 +171,29 @@ beforeAll(async () => {
     ],
   })(TestModule);
   app = await NestFactory.create(TestModule, { logger: false });
-  // Bun's Node-compatible HTTP server does not support port zero in this
-  // test environment. A high ephemeral-range port keeps the API contract
-  // test independent of the demo's Compose port.
-  const port = 40_000 + Math.floor(Math.random() * 10_000);
-  await app.listen(port, '127.0.0.1');
-  baseUrl = await app.getUrl();
+  // Retry bind races. Nest's Bun HTTP adapter cannot listen on port zero in
+  // this environment, so the fixture uses a bounded high-port probe instead.
+  baseUrl = await listenOnAvailablePort(app);
 });
 
 afterAll(async () => { await app.close(); });
 
 describe('Flowkit API sessions and role paths', () => {
+  it('retries an address collision when starting the API fixture', async () => {
+    const attemptedPorts: number[] = [];
+    const target = {
+      listen: async (port: number) => {
+        attemptedPorts.push(port);
+        if (attemptedPorts.length === 1) throw Object.assign(new Error('address in use'), { code: 'EADDRINUSE' });
+      },
+      getUrl: async () => 'http://127.0.0.1:40123',
+    };
+
+    await expect(listenOnAvailablePort(target)).resolves.toBe('http://127.0.0.1:40123');
+    expect(attemptedPorts).toHaveLength(2);
+    expect(attemptedPorts[0]).not.toBe(attemptedPorts[1]);
+  });
+
   it('returns Flowkit activity and durable inbox views for a signed session', async () => {
     const employee = await login(baseUrl, 'employee-1');
     const { id } = await employee.post('/flows', fiveDayLeave);
@@ -232,5 +264,15 @@ describe('Flowkit API sessions and role paths', () => {
       checkedAt: '2026-07-29T00:00:00.000Z',
     });
     expect(runtime.delivery.heartbeatAt).toBe('2026-07-29T00:00:00.000Z');
+    expect(runtime.mailpitUrl).toBe('http://localhost:8025');
+
+    const previousMailpitUrl = process.env.MAILPIT_URL;
+    process.env.MAILPIT_URL = 'http://localhost:8026';
+    try {
+      expect((await employee.get('/runtime') as any).mailpitUrl).toBe('http://localhost:8026');
+    } finally {
+      if (previousMailpitUrl === undefined) delete process.env.MAILPIT_URL;
+      else process.env.MAILPIT_URL = previousMailpitUrl;
+    }
   });
 });

@@ -10,7 +10,15 @@ const stageLabel = {
   employee_draft: 'DRAFT', policy_evaluation: 'EVALUATING', manager_review: 'MANAGER REVIEW',
   fulfillment: 'FULFILLMENT', approved: 'APPROVED', rejected: 'REJECTED', withdrawn: 'WITHDRAWN',
 };
-const state = { selectedId: null, operatorId: 'employee-1', principal: null, flow: null, tasks: [] };
+const state = {
+  selectedId: null,
+  operatorId: 'employee-1',
+  principal: null,
+  flow: null,
+  tasks: [],
+  pendingInboxDelivery: null,
+  inboxPollSequence: 0,
+};
 const $ = (selector) => document.querySelector(selector);
 const currentRole = () => state.principal?.role;
 const currentOperator = () => operators[state.operatorId] || operators['employee-1'];
@@ -137,6 +145,10 @@ async function loadFlow(id) {
 async function transitionRecord(id, action) {
   try {
     await api(`/flows/${id}/actions`, { method: 'POST', body: JSON.stringify({ action }) });
+    if (['approve', 'reject'].includes(action) && state.flow?.employee_id) {
+      state.pendingInboxDelivery = { flowId: id, recipientId: state.flow.employee_id, action };
+      state.inboxPollSequence += 1;
+    }
     await refresh({ reloadFlow: true });
     toast(`${displayAction(action)} recorded`);
   } catch (error) {
@@ -210,12 +222,57 @@ function renderNotifications(payload) {
   target.innerHTML = `${inboxRows}${deliveryRows}`;
 }
 
+function configureMailpitLink(url) {
+  if (typeof url !== 'string') return;
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return;
+    document.querySelectorAll('[data-mailpit-link]').forEach((link) => { link.href = parsed.href; });
+  } catch {
+    // Keep the disabled placeholder until the API reports a valid public preview URL.
+  }
+}
+
+function inboxContainsDelivery(payload, pending) {
+  return (payload?.inbox || []).some((item) => {
+    const text = `${item.subject || ''} ${item.body || ''}`.toLowerCase();
+    return text.includes(String(pending.flowId).toLowerCase()) && text.includes(pending.action);
+  });
+}
+
+function pause(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+async function pollForInboxDelivery() {
+  const pending = state.pendingInboxDelivery;
+  if (!pending || state.principal?.subjectId !== pending.recipientId) return;
+  const sequence = state.inboxPollSequence;
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline && state.pendingInboxDelivery === pending && state.inboxPollSequence === sequence) {
+    try {
+      const notifications = await api('/notifications');
+      renderNotifications(notifications);
+      if (inboxContainsDelivery(notifications, pending)) {
+        state.pendingInboxDelivery = null;
+        toast('Notification delivered to the durable inbox.');
+        return;
+      }
+    } catch (error) {
+      toast(error.message, true);
+      return;
+    }
+    await pause(500);
+  }
+}
+
 function renderServiceStatus(name, service) {
   const ready = Boolean(service?.ready);
   return `<article class="service-status"><div><strong>${escapeHtml(name)}</strong><small>${ready ? 'heartbeat current' : 'heartbeat missing or stale'}</small></div><code>${escapeHtml(timestamp(service?.heartbeatAt))}</code><span class="badge ${ready ? 'badge-success' : 'badge-error'}">${ready ? 'READY' : 'OFFLINE'}</span></article>`;
 }
 
 function renderHealth(status) {
+  configureMailpitLink(status?.mailpitUrl);
   const runtime = status.flowkitRuntime;
   const delivery = status.delivery;
   const online = runtime?.ready && delivery?.ready;
@@ -239,6 +296,8 @@ async function refresh({ reloadFlow = false } = {}) {
     renderNotifications(notifications);
     renderHealth(status);
     if (state.selectedId && (reloadFlow || state.flow)) await loadFlow(state.selectedId);
+    void pollForInboxDelivery();
+    return { tasks, notifications, status };
   } catch (error) {
     toast(error.message, true);
   }
@@ -256,6 +315,7 @@ async function switchOperator(userId) {
   const result = await api('/auth/login', { method: 'POST', body: JSON.stringify({ userId }) });
   state.principal = result.principal;
   state.operatorId = result.principal.subjectId;
+  state.inboxPollSequence += 1;
   renderOperator();
   await refresh({ reloadFlow: Boolean(state.selectedId) });
 }

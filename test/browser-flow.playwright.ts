@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 
 const demoUrl = process.env.FLOWKIT_DEMO_URL ?? 'http://localhost:3011';
+const mailpitUrl = new URL(process.env.FLOWKIT_DEMO_MAILPIT_URL ?? 'http://localhost:8025').href;
 
 type ReviewDecision = 'approve' | 'reject';
 
@@ -8,6 +9,7 @@ async function createAndSubmitMultiDayLeave(page: Page): Promise<string> {
   await page.goto(demoUrl);
   await expect(page.getByText('Demo operator · Employee')).toBeVisible();
   await expect(page.locator('#runtime-status')).toHaveText('ALL READY');
+  await expect(page.locator('#mailpit-preview-link')).toHaveAttribute('href', mailpitUrl);
 
   await page.getByLabel('Business days').fill('5');
   await page.getByLabel('Reason').fill(`Browser reference journey ${Date.now()}`);
@@ -48,7 +50,10 @@ test('employee submits multi-day leave and the assigned manager claims then appr
   await expect(page.getByText('Demo operator · Employee')).toBeVisible();
   await expect(page.locator('#flow-title')).toHaveText(requestId);
   await expect(page.locator('#flow-badge')).toHaveText('APPROVED');
-  await expect(page.locator('#notifications-list')).toContainText('approved', { timeout: 30_000 });
+  await expect.poll(
+    () => page.locator('#notifications-list').textContent(),
+    { timeout: 30_000, message: 'the console should refresh until the durable approval notice is visible' },
+  ).toContain('approved');
   await expect(page.locator('#runtime-status')).toHaveText('ALL READY');
 });
 

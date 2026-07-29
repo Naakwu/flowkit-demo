@@ -48,6 +48,7 @@ If a default host port is occupied, override it without changing container-to-co
 
 ```bash
 FLOWKIT_DEMO_API_PORT=3012 FLOWKIT_DEMO_MAILPIT_HTTP_PORT=8026 FLOWKIT_DEMO_MAILPIT_SMTP_PORT=1026 \
+FLOWKIT_DEMO_MAILPIT_URL=http://localhost:8026 \
 FLOWKIT_DEMO_POSTGRES_PORT=5442 FLOWKIT_DEMO_TEMPORAL_PORT=7234 \
 bun run --cwd packages/flowkit-demo stack:up
 ```
