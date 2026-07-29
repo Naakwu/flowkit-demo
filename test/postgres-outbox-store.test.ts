@@ -1,9 +1,8 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
 import type { NotificationDeliveryEnvelope } from '@flowkit/notify';
-import postgres, { type Sql } from 'postgres';
 
-import { loadConfig } from '../src/config';
 import { PostgresOutboxStore, readDelivery } from '../src/db/postgres-outbox-store';
+import { durableTestDatabase } from './durable-test-database';
 
 const envelope: NotificationDeliveryEnvelope = {
   namespace: 'flowkit-demo', sourceKey: 'leave-1:approved', aggregate: { type: 'leave', id: 'leave-1' },
@@ -13,21 +12,7 @@ const envelope: NotificationDeliveryEnvelope = {
   retryPolicy: { maxAttempts: 3, initialDelayMs: 1000, multiplier: 2, maxDelayMs: 10_000 }, metadata: {},
 };
 
-async function database(): Promise<Sql | null> {
-  let client: Sql | undefined;
-  try {
-    client = postgres(loadConfig().DATABASE_URL, { max: 5, connect_timeout: 2 });
-    const [row] = await client<{ outbox: string | null }[]>`SELECT to_regclass('public.notification_outbox') AS outbox`;
-    if (!row?.outbox) throw new Error('notification_outbox is absent');
-    return client;
-  } catch (error) {
-    if (client) await client.end({ timeout: 1 });
-    process.stderr.write(`Skipping durable PostgresOutboxStore tests: disposable database unavailable (${error instanceof Error ? error.message : String(error)}).\n`);
-    return null;
-  }
-}
-
-const sql = await database();
+const sql = await durableTestDatabase('PostgresOutboxStore', ['notification_outbox']);
 const durableTests = sql ? describe : describe.skip;
 afterEach(async () => { if (sql) await sql`DELETE FROM notification_outbox`; });
 afterAll(async () => { if (sql) await sql.end({ timeout: 5 }); });

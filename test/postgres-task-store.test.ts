@@ -1,29 +1,12 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
 import { buildInitialState, type FlowState } from '@flowkit/core';
 import { planTaskProjection, type FlowTask } from '@flowkit/tasks';
-import postgres, { type Sql } from 'postgres';
 
-import { loadConfig } from '../src/config';
 import { PostgresTaskStore } from '../src/db/postgres-task-store';
 import { leaveDefinition } from '../src/leave/leave.definition';
+import { durableTestDatabase } from './durable-test-database';
 
-async function database(): Promise<Sql | null> {
-  let client: Sql | undefined;
-  try {
-    client = postgres(loadConfig().DATABASE_URL, { max: 5, connect_timeout: 2 });
-    const [row] = await client<{ tasks: string | null; operations: string | null }[]>`
-      SELECT to_regclass('public.flow_tasks') AS tasks, to_regclass('public.flow_task_projection_operations') AS operations
-    `;
-    if (!row?.tasks || !row.operations) throw new Error('required durable task tables are absent');
-    return client;
-  } catch (error) {
-    if (client) await client.end({ timeout: 1 });
-    process.stderr.write(`Skipping durable PostgresTaskStore tests: disposable database unavailable (${error instanceof Error ? error.message : String(error)}).\n`);
-    return null;
-  }
-}
-
-const sql = await database();
+const sql = await durableTestDatabase('PostgresTaskStore', ['flow_tasks', 'flow_task_events', 'flow_task_projection_operations', 'flow_task_invitations']);
 const durableTests = sql ? describe : describe.skip;
 
 async function clearTasks() {
