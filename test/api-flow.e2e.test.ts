@@ -134,30 +134,53 @@ async function login(baseUrl: string, userId: string): Promise<RequestClient> {
   };
 }
 
-let app: Awaited<ReturnType<typeof NestFactory.create>>;
+type TestApplication = Awaited<ReturnType<typeof NestFactory.create>>;
+
+let app: TestApplication;
 let baseUrl: string;
 
 function addressInUse(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'EADDRINUSE';
 }
 
-async function listenOnAvailablePort(target: { listen(port: number, host: string): Promise<unknown>; getUrl(): Promise<string> }): Promise<string> {
-  let lastError: unknown;
+function highPortCandidates() {
   const firstPort = 40_000 + Math.floor(Math.random() * 10_000);
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    const port = 40_000 + ((firstPort - 40_000 + attempt * 977) % 10_000);
+  return Array.from({ length: 20 }, (_, attempt) => (
+    40_000 + ((firstPort - 40_000 + attempt * 977) % 10_000)
+  ));
+}
+
+async function closeAfterFailedListen(target: TestApplication) {
+  try {
+    await target.close();
+  } catch {
+    // A failed Nest listen can leave the adapter without an active listener.
+  }
+}
+
+async function startTestApplication(
+  createApplication: () => Promise<TestApplication>,
+  ports = highPortCandidates(),
+): Promise<{ app: TestApplication; baseUrl: string; attemptedPorts: number[] }> {
+  let lastError: unknown;
+  const attemptedPorts: number[] = [];
+
+  for (const port of ports) {
+    const target = await createApplication();
+    attemptedPorts.push(port);
     try {
       await target.listen(port, '127.0.0.1');
-      return target.getUrl();
+      return { app: target, baseUrl: await target.getUrl(), attemptedPorts };
     } catch (error) {
       lastError = error;
+      await closeAfterFailedListen(target);
       if (!addressInUse(error)) throw error;
     }
   }
   throw lastError ?? new Error('Could not bind the HTTP test server to an available port.');
 }
 
-beforeAll(async () => {
+async function createTestApplication(): Promise<TestApplication> {
   const consumer = new FakeConsumer();
   const sessions = new FakeSessions();
   class TestModule {}
@@ -170,28 +193,40 @@ beforeAll(async () => {
       { provide: RuntimeHealthRepository, useValue: new FakeRuntimeHealth() },
     ],
   })(TestModule);
-  app = await NestFactory.create(TestModule, { logger: false });
-  // Retry bind races. Nest's Bun HTTP adapter cannot listen on port zero in
-  // this environment, so the fixture uses a bounded high-port probe instead.
-  baseUrl = await listenOnAvailablePort(app);
+  return NestFactory.create(TestModule, { logger: false });
+}
+
+beforeAll(async () => {
+  // Bun's Node-compatible HTTP server cannot bind to port zero here. A fresh
+  // Nest application is created for every candidate, so EADDRINUSE never
+  // leaves the application used by the API contract tests in a failed state.
+  const started = await startTestApplication(createTestApplication);
+  app = started.app;
+  baseUrl = started.baseUrl;
 });
 
 afterAll(async () => { await app.close(); });
 
 describe('Flowkit API sessions and role paths', () => {
-  it('retries an address collision when starting the API fixture', async () => {
-    const attemptedPorts: number[] = [];
-    const target = {
-      listen: async (port: number) => {
-        attemptedPorts.push(port);
-        if (attemptedPorts.length === 1) throw Object.assign(new Error('address in use'), { code: 'EADDRINUSE' });
-      },
-      getUrl: async () => 'http://127.0.0.1:40123',
-    };
+  it('rebuilds the Nest fixture after a real address collision', async () => {
+    const blockedPort = Number(new URL(baseUrl).port);
+    const createdApps: TestApplication[] = [];
+    const started = await startTestApplication(async () => {
+      const candidate = await createTestApplication();
+      createdApps.push(candidate);
+      return candidate;
+    }, [blockedPort, ...highPortCandidates().filter((port) => port !== blockedPort)]);
 
-    await expect(listenOnAvailablePort(target)).resolves.toBe('http://127.0.0.1:40123');
-    expect(attemptedPorts).toHaveLength(2);
-    expect(attemptedPorts[0]).not.toBe(attemptedPorts[1]);
+    try {
+      expect(started.attemptedPorts[0]).toBe(blockedPort);
+      expect(started.attemptedPorts.length).toBeGreaterThan(1);
+      const successfulApp = createdApps[createdApps.length - 1]!;
+      expect(started.app).toBe(successfulApp);
+      expect(started.app).not.toBe(createdApps[0]);
+      expect(new URL(started.baseUrl).port).not.toBe(String(blockedPort));
+    } finally {
+      await started.app.close();
+    }
   });
 
   it('returns Flowkit activity and durable inbox views for a signed session', async () => {
