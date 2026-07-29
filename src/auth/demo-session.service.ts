@@ -1,7 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-import { ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
 import type { AuthenticatedPrincipal } from '@flowkit/auth';
+import type { Sql } from 'postgres';
 
 import { loadConfig } from '../config';
 import { createDemoDatabaseClient } from '../db/client';
@@ -13,15 +14,34 @@ const sessionLifetimeMs = 24 * 60 * 60 * 1000;
 type SessionPayload = { userId: string; role: DemoRole; expiresAt: string };
 type UserRow = { id: string; role_key: string };
 
+export type DemoSessionDependencies = {
+  config: () => ReturnType<typeof loadConfig>;
+  createDatabaseClient: (databaseUrl: string) => Sql;
+  now: () => Date;
+};
+
+export const DEMO_SESSION_DEPENDENCIES = Symbol('DEMO_SESSION_DEPENDENCIES');
+
 @Injectable()
 export class DemoSessionService {
+  private readonly dependencies: DemoSessionDependencies;
+
+  constructor(@Optional() @Inject(DEMO_SESSION_DEPENDENCIES) dependencies?: Partial<DemoSessionDependencies>) {
+    this.dependencies = {
+      config: loadConfig,
+      createDatabaseClient: createDemoDatabaseClient,
+      now: () => new Date(),
+      ...dependencies,
+    };
+  }
+
   async create(userId: string): Promise<{ token: string; principal: AuthenticatedPrincipal }> {
-    const config = loadConfig();
+    const config = this.dependencies.config();
     if (!['development', 'test'].includes(config.NODE_ENV)) {
       throw new ForbiddenException('Demo sessions are available only in development and test environments.');
     }
 
-    const sql = createDemoDatabaseClient(config.DATABASE_URL);
+    const sql = this.dependencies.createDatabaseClient(config.DATABASE_URL);
     try {
       const [user] = await sql<UserRow[]>`
         SELECT u.id, r.role_key
@@ -36,7 +56,7 @@ export class DemoSessionService {
       }
 
       const role = user.role_key as DemoRole;
-      const expiresAt = new Date(Date.now() + sessionLifetimeMs).toISOString();
+      const expiresAt = new Date(this.dependencies.now().getTime() + sessionLifetimeMs).toISOString();
       return { token: this.sign({ userId: user.id, role, expiresAt }, config.BETTER_AUTH_SECRET), principal: principal(user.id, role) };
     } finally {
       await sql.end({ timeout: 5 });
@@ -44,9 +64,9 @@ export class DemoSessionService {
   }
 
   async verify(token: string): Promise<AuthenticatedPrincipal> {
-    const config = loadConfig();
+    const config = this.dependencies.config();
     const payload = this.read(token, config.BETTER_AUTH_SECRET);
-    if (!payload || new Date(payload.expiresAt).getTime() <= Date.now()) {
+    if (!payload || new Date(payload.expiresAt).getTime() <= this.dependencies.now().getTime()) {
       throw new UnauthorizedException('Demo session is invalid or expired.');
     }
     return principal(payload.userId, payload.role);
