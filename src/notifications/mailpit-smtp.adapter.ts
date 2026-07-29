@@ -27,10 +27,18 @@ type NodemailerModule = {
 const nodemailer = require('nodemailer') as NodemailerModule;
 const messageIdFor = (dedupeKey: string) => `<${createHash('sha256').update(dedupeKey).digest('hex')}@flowkit-demo.local>`;
 
-/** Mailpit SMTP channel adapter. A stable Message-ID and dedupe cache make retries within a worker idempotent. */
+/**
+ * Mailpit SMTP channel adapter.
+ *
+ * SMTP provides no durable idempotency key: a process can crash after the server
+ * accepts a message but before the outbox records its receipt. The stable
+ * Message-ID and local cache help make ordinary retries easier to inspect, but
+ * neither survives a restart, so Flowkit must treat this channel as
+ * non-idempotent.
+ */
 export class MailpitSmtpAdapter implements NotificationChannelAdapter {
   readonly channel = 'email';
-  readonly idempotent = true;
+  readonly idempotent = false;
   private readonly sent = new Map<string, string>();
   private readonly transport: SmtpTransport;
   private readonly from: string;

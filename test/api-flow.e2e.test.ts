@@ -172,4 +172,15 @@ describe('Flowkit API sessions and role paths', () => {
     await expect(request(baseUrl, '/tasks', { headers: { cookie: 'flowkit_demo_session=tampered' } })).rejects.toMatchObject({ status: 401 });
     await expect(request(baseUrl, '/tasks', { headers: { cookie: 'flowkit_demo_session=%E0%A4%A' } })).rejects.toMatchObject({ status: 401 });
   });
+
+  it('reports worker heartbeats separately from API observation time', async () => {
+    const employee = await login(baseUrl, 'employee-1');
+    const runtime = await employee.get('/runtime') as any;
+    expect(runtime.flowkitRuntime).toMatchObject({
+      ready: true,
+      heartbeatAt: '2026-07-29T00:00:00.000Z',
+      checkedAt: '2026-07-29T00:00:00.000Z',
+    });
+    expect(runtime.delivery.heartbeatAt).toBe('2026-07-29T00:00:00.000Z');
+  });
 });

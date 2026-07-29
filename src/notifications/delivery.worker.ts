@@ -24,11 +24,11 @@ export async function runDeliveryCycle(options: {
   outbox: PostgresOutboxStore;
   adapters: NotificationAdapterRegistry;
   health: RuntimeHealthRepository;
-}): Promise<{ delivered: number }> {
+}): Promise<{ claimed: number }> {
   const runtime = new NotificationDeliveryRuntime({ store: options.outbox, adapters: options.adapters });
-  const delivered = await runtime.claimAndDeliver(options.owner, 50);
+  const claimed = await runtime.claimAndDeliver(options.owner, 50);
   await options.health.heartbeat('delivery-worker');
-  return { delivered };
+  return { claimed };
 }
 
 export function sleep(milliseconds: number, signal: AbortSignal): Promise<void> {
@@ -54,13 +54,13 @@ export async function runDeliveryLoop(signal: AbortSignal, options: {
   logger?: Pick<Console, 'error'>;
 }): Promise<void> {
   while (!signal.aborted) {
-    let delivered = 0;
+    let claimed = 0;
     try {
-      ({ delivered } = await runDeliveryCycle(options));
+      ({ claimed } = await runDeliveryCycle(options));
     } catch (error) {
       options.logger?.error('Flowkit notification delivery cycle failed', error);
     }
-    await sleep(delivered > 0 ? options.activePollMs ?? 100 : options.idlePollMs ?? 1_000, signal);
+    await sleep(claimed > 0 ? options.activePollMs ?? 100 : options.idlePollMs ?? 1_000, signal);
   }
 }
 

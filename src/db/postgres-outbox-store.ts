@@ -115,7 +115,14 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
   async recoverExpired(now: Date): Promise<number> {
     const rows = await this.sql<{ id: string }[]>`
       UPDATE notification_outbox
-      SET status = 'pending', lease_owner = NULL, lease_expires_at = NULL
+      SET status = CASE WHEN channel = 'email' THEN 'reconciliation_required' ELSE 'pending' END,
+          last_error_code = CASE WHEN channel = 'email' THEN 'LEASE_EXPIRED' ELSE last_error_code END,
+          last_error_message = CASE
+            WHEN channel = 'email' THEN 'SMTP lease expired; delivery may have succeeded and requires reconciliation.'
+            ELSE last_error_message
+          END,
+          lease_owner = NULL,
+          lease_expires_at = NULL
       WHERE status = 'leased' AND lease_expires_at <= ${now.toISOString()}
       RETURNING id
     `;

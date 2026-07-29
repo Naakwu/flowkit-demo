@@ -11,6 +11,7 @@ type InboxRow = {
   subject: string;
   body: string;
   read_at: Date | string | null;
+  delivered_at: Date | string;
 };
 
 /** Durable in-app notification delivery keyed by the Flowkit envelope dedupe key. */
@@ -40,12 +41,12 @@ export class PostgresInboxAdapter implements NotificationChannelAdapter {
     return { providerMessageId: row.id };
   }
 
-  async forUser(userId: string): Promise<Array<{ id: string; dedupeKey: string; subject: string; body: string; readAt: Date | null }>> {
+  async forUser(userId: string): Promise<Array<{ id: string; dedupeKey: string; subject: string; body: string; readAt: Date | null; deliveredAt: Date }>> {
     const rows = await this.sql<InboxRow[]>`
-      SELECT id, user_id, dedupe_key, subject, body, read_at
+      SELECT id, user_id, dedupe_key, subject, body, read_at, delivered_at
       FROM notification_inbox
       WHERE user_id = ${userId}
-      ORDER BY id ASC
+      ORDER BY delivered_at DESC, id DESC
     `;
     return rows.map((row) => ({
       id: row.id,
@@ -53,6 +54,7 @@ export class PostgresInboxAdapter implements NotificationChannelAdapter {
       subject: row.subject,
       body: row.body,
       readAt: row.read_at ? new Date(row.read_at) : null,
+      deliveredAt: new Date(row.delivered_at),
     }));
   }
 
