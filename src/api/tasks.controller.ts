@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
 
 import type { AuthenticatedPrincipal } from '@flowkit/auth';
 
@@ -32,6 +32,7 @@ export class TasksController {
     }
     const task = await this.consumer.repository.tasks.get(id);
     if (!task) throw new NotFoundException('Task not found.');
+    await this.requireAssignedManager(task, req.principal);
     try {
       return await this.consumer.tasks.claim({
         taskId: task.id,
@@ -41,6 +42,16 @@ export class TasksController {
       });
     } catch (error) {
       throw asFlowkitHttpException(error);
+    }
+  }
+
+  private async requireAssignedManager(task: { subjectType: string; subjectId: string; role: string }, current: AuthenticatedPrincipal) {
+    if (current.role !== 'manager' || current.readOnly || task.subjectType !== 'leave' || task.role !== 'manager') {
+      throw new ForbiddenException('Only the assigned manager can claim this task.');
+    }
+    const request = await this.consumer.repository.getRequest(task.subjectId);
+    if (!request || request.manager_id !== current.subjectId) {
+      throw new ForbiddenException('Only the assigned manager can claim this task.');
     }
   }
 }

@@ -20,6 +20,6 @@ describe('Flowkit reference console contract', () => {
     expect(app).toContain("'/tasks'");
     expect(app).toContain("'/notifications'");
     expect(app).toContain("'/runtime'");
-    expect(app).not.toMatch(/x-demo-user|x-demo-role|temporal/i);
+    expect(app).not.toMatch(/x-demo-user|x-demo-role|temporal|task queue/i);
   });
 });

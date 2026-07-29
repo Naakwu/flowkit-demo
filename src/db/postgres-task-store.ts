@@ -251,7 +251,12 @@ export class PostgresTaskStore implements TaskStore {
     const rows = await this.taskRows(this.sql, this.sql``);
     let items = rows.map((row) => this.task(row));
     if (query.view === 'my_claims') items = items.filter((task) => task.assigneeId === query.actorId);
-    if (query.view === 'role_queue') items = items.filter((task) => task.status === 'open' && (!query.roles?.length || query.roles.includes(task.role)));
+    if (query.view === 'role_queue') {
+      items = items.filter((task) =>
+        (task.status === 'open' && (!query.roles?.length || query.roles.includes(task.role)))
+        || (task.status === 'claimed' && task.assigneeId === query.actorId),
+      );
+    }
     if (query.statuses?.length) items = items.filter((task) => query.statuses!.includes(task.status));
     if (query.stage) items = items.filter((task) => task.stage === query.stage);
     if (query.subjectId) items = items.filter((task) => task.subjectId === query.subjectId);

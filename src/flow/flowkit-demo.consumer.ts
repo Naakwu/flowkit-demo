@@ -52,7 +52,13 @@ export class FlowkitDemoConsumer implements FlowkitConsumer {
       tasks: this.repository.tasks,
       actorResolver: this.actorResolver,
       eligibility: {
-        canWorkRole: async ({ actorId, role }) => (await this.actorResolver.resolve(actorId)).roles.includes(role),
+        canWorkRole: async ({ actorId, role, task }) => {
+          const actor = await this.actorResolver.resolve(actorId);
+          if (!actor.roles.includes(role)) return false;
+          if (task.subjectType !== 'leave' || role !== 'manager') return true;
+          const request = await this.repository.getRequest(task.subjectId);
+          return request?.manager_id === actor.id;
+        },
       },
       clock: { now },
       views: {

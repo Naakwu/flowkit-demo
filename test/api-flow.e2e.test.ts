@@ -32,6 +32,7 @@ type RequestClient = {
 const identities = new Map<string, AuthenticatedPrincipal>([
   ['employee-1', principal('employee-1', 'employee')],
   ['manager-1', principal('manager-1', 'manager')],
+  ['manager-2', principal('manager-2', 'manager')],
 ]);
 
 class FakeSessions {
@@ -60,7 +61,10 @@ class FakeConsumer {
     },
   };
   readonly tasks = {
-    list: async () => ({ items: this.task ? [this.task] : [], nextCursor: null }),
+    list: async ({ actor }: any) => ({
+      items: this.task && (this.task.status === 'open' || this.task.assigneeId === actor.id) ? [this.task] : [],
+      nextCursor: null,
+    }),
     claim: async (input: any) => {
       if (!this.task || input.expectedRevision !== this.task.revision || this.task.status !== 'open') {
         throw new Error('stale_task_revision');
@@ -172,15 +176,34 @@ describe('Flowkit API sessions and role paths', () => {
     await expect(manager.post(`/flows/${id}/actions`, { action: 'approve' })).rejects.toMatchObject({ status: 403 });
   });
 
-  it('requires employee submission and a claimed manager task for approval', async () => {
+  it('keeps a claimed manager task visible after refresh and permits the decision', async () => {
     const employee = await login(baseUrl, 'employee-1');
     const { id } = await employee.post('/flows', fiveDayLeave);
     await employee.post(`/flows/${id}/actions`, { action: 'submit' });
     const manager = await login(baseUrl, 'manager-1');
     const [task] = await manager.get('/tasks') as any[];
     await manager.post(`/tasks/${task.id}/claim`, { expectedRevision: task.revision });
+    const [claimed] = await manager.get('/tasks') as any[];
+    expect(claimed).toMatchObject({ id: task.id, status: 'claimed', assigneeId: 'manager-1' });
     await manager.post(`/flows/${id}/actions`, { action: 'approve' });
+    expect(await employee.get(`/flows/${id}`)).toMatchObject({ state: { stage: 'approved' } });
     await expect(employee.post(`/flows/${id}/actions`, { action: 'approve' }, { 'x-demo-user': 'manager-1', 'x-demo-role': 'manager' })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('rejects a claim by a manager other than the leave request assignee', async () => {
+    const employee = await login(baseUrl, 'employee-1');
+    const { id } = await employee.post('/flows', fiveDayLeave);
+    await employee.post(`/flows/${id}/actions`, { action: 'submit' });
+    const manager2 = await login(baseUrl, 'manager-2');
+    const [task] = await manager2.get('/tasks') as any[];
+
+    await expect(manager2.post(`/tasks/${task.id}/claim`, { expectedRevision: task.revision })).rejects.toMatchObject({ status: 403 });
+
+    const manager1 = await login(baseUrl, 'manager-1');
+    await expect(manager1.post(`/tasks/${task.id}/claim`, { expectedRevision: task.revision })).resolves.toMatchObject({
+      status: 'claimed',
+      assigneeId: 'manager-1',
+    });
   });
 
   it('rejects requests without a valid signed session cookie', async () => {

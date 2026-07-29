@@ -182,7 +182,7 @@ function renderTasks(items) {
         }
         await transitionRecord(task.subjectId, button.dataset.action === 'approve-task' ? 'approve' : 'reject');
       } catch (error) {
-        toast(`${error.message}. Refresh the task queue and try again.`, true);
+        toast(`${error.message}. Refresh the task list and try again.`, true);
       }
     }));
   });

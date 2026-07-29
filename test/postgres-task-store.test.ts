@@ -39,6 +39,27 @@ durableTests('PostgresTaskStore', () => {
     expect(results.filter((result) => result.task)).toHaveLength(1);
   });
 
+  it('keeps a claimant\'s task alongside other open role tasks', async () => {
+    const store = new PostgresTaskStore(sql!);
+    const initial = buildInitialState(leaveDefinition);
+    const managerReview: FlowState = { stage: 'manager_review', status: 'active', pendingRole: 'manager', tracks: {} };
+    const first = (await store.applyProjection({ plan: planTaskProjection({
+      namespace: 'flowkit-demo', flowId: 'leave-inbox-1', subject: { type: 'leave', id: 'leave-inbox-1' }, definition: leaveDefinition,
+      operationId: 'inbox-1', transitionSequence: 1, action: 'require_manager', actorId: 'system', previousState: initial, nextState: managerReview, metadata: {},
+    }, null), operationId: 'inbox-1' })).tasks[0]!;
+    const second = (await store.applyProjection({ plan: planTaskProjection({
+      namespace: 'flowkit-demo', flowId: 'leave-inbox-2', subject: { type: 'leave', id: 'leave-inbox-2' }, definition: leaveDefinition,
+      operationId: 'inbox-2', transitionSequence: 1, action: 'require_manager', actorId: 'system', previousState: initial, nextState: managerReview, metadata: {},
+    }, null), operationId: 'inbox-2' })).tasks[0]!;
+    await store.claim({ taskId: first.id, expectedRevision: first.revision, actorId: 'manager-1', operationId: 'inbox-claim-1', now: new Date().toISOString() });
+
+    const mine = await store.inbox({ view: 'role_queue', actorId: 'manager-1', roles: ['manager'], statuses: ['open', 'claimed'] });
+    const otherManager = await store.inbox({ view: 'role_queue', actorId: 'manager-2', roles: ['manager'], statuses: ['open', 'claimed'] });
+
+    expect(mine.items.map((task) => task.id).sort()).toEqual([first.id, second.id].sort());
+    expect(otherManager.items.map((task) => task.id)).toEqual([second.id]);
+  });
+
   it('keeps the original opener and commits a two-mutation projection once', async () => {
     const store = new PostgresTaskStore(sql!);
     const initial = buildInitialState(leaveDefinition);
