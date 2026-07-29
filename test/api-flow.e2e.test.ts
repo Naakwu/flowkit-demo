@@ -61,10 +61,14 @@ class FakeConsumer {
     },
   };
   readonly tasks = {
-    list: async ({ actor }: any) => ({
-      items: this.task && (this.task.status === 'open' || this.task.assigneeId === actor.id) ? [this.task] : [],
-      nextCursor: null,
-    }),
+    list: async ({ actor }: any) => {
+      const request = this.task ? this.requests.get(this.task.subjectId) : null;
+      const visible = this.task && (
+        (this.task.status === 'open' && request?.manager_id === actor.id)
+        || (this.task.status === 'claimed' && this.task.assigneeId === actor.id)
+      );
+      return { items: visible ? [this.task] : [], nextCursor: null };
+    },
     claim: async (input: any) => {
       if (!this.task || input.expectedRevision !== this.task.revision || this.task.status !== 'open') {
         throw new Error('stale_task_revision');
@@ -190,16 +194,19 @@ describe('Flowkit API sessions and role paths', () => {
     await expect(employee.post(`/flows/${id}/actions`, { action: 'approve' }, { 'x-demo-user': 'manager-1', 'x-demo-role': 'manager' })).rejects.toMatchObject({ status: 403 });
   });
 
-  it('rejects a claim by a manager other than the leave request assignee', async () => {
+  it('lists a claim action only for the assigned manager and still rejects an unassigned claim attempt', async () => {
     const employee = await login(baseUrl, 'employee-1');
     const { id } = await employee.post('/flows', fiveDayLeave);
     await employee.post(`/flows/${id}/actions`, { action: 'submit' });
     const manager2 = await login(baseUrl, 'manager-2');
-    const [task] = await manager2.get('/tasks') as any[];
+    expect(await manager2.get('/tasks')).toEqual([]);
+
+    const manager1 = await login(baseUrl, 'manager-1');
+    const [task] = await manager1.get('/tasks') as any[];
+    expect(task).toMatchObject({ subjectId: id, status: 'open', assigneeId: null });
 
     await expect(manager2.post(`/tasks/${task.id}/claim`, { expectedRevision: task.revision })).rejects.toMatchObject({ status: 403 });
 
-    const manager1 = await login(baseUrl, 'manager-1');
     await expect(manager1.post(`/tasks/${task.id}/claim`, { expectedRevision: task.revision })).resolves.toMatchObject({
       status: 'claimed',
       assigneeId: 'manager-1',
