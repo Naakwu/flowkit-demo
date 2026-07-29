@@ -26,7 +26,8 @@ export class TasksController {
 
   @Post(':id/claim')
   async claim(@Param('id') id: string, @Body() body: { expectedRevision?: unknown } | undefined, @Req() req: SessionRequest) {
-    if (!Number.isInteger(body?.expectedRevision) || (body.expectedRevision as number) < 0) {
+    const expectedRevision = body?.expectedRevision;
+    if (typeof expectedRevision !== 'number' || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
       throw new BadRequestException('expectedRevision must be a non-negative integer.');
     }
     const task = await this.consumer.repository.tasks.get(id);
@@ -34,7 +35,7 @@ export class TasksController {
     try {
       return await this.consumer.tasks.claim({
         taskId: task.id,
-        expectedRevision: body.expectedRevision as number,
+        expectedRevision,
         actor: { id: req.principal.subjectId, roles: [req.principal.role] },
         operationId: `claim:${task.id}:${req.principal.subjectId}:${randomUUID()}`,
       });

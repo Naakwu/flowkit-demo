@@ -148,6 +148,14 @@ beforeAll(async () => {
 afterAll(async () => { await app.close(); });
 
 describe('Flowkit API sessions and role paths', () => {
+  it('rejects approval before the manager task is claimed', async () => {
+    const employee = await login(baseUrl, 'employee-1');
+    const { id } = await employee.post('/flows', fiveDayLeave);
+    await employee.post(`/flows/${id}/actions`, { action: 'submit' });
+    const manager = await login(baseUrl, 'manager-1');
+    await expect(manager.post(`/flows/${id}/actions`, { action: 'approve' })).rejects.toMatchObject({ status: 403 });
+  });
+
   it('requires employee submission and a claimed manager task for approval', async () => {
     const employee = await login(baseUrl, 'employee-1');
     const { id } = await employee.post('/flows', fiveDayLeave);
@@ -162,5 +170,6 @@ describe('Flowkit API sessions and role paths', () => {
   it('rejects requests without a valid signed session cookie', async () => {
     await expect(request(baseUrl, '/tasks')).rejects.toMatchObject({ status: 401 });
     await expect(request(baseUrl, '/tasks', { headers: { cookie: 'flowkit_demo_session=tampered' } })).rejects.toMatchObject({ status: 401 });
+    await expect(request(baseUrl, '/tasks', { headers: { cookie: 'flowkit_demo_session=%E0%A4%A' } })).rejects.toMatchObject({ status: 401 });
   });
 });

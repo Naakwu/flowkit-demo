@@ -1,10 +1,11 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import { ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import type { AuthenticatedPrincipal } from '@flowkit/auth';
 
 import { loadConfig } from '../config';
 import { createDemoDatabaseClient } from '../db/client';
-import { principal, type AuthenticatedPrincipal } from './principal.adapters';
+import { principal } from './principal.adapters';
 import { roleRegistry, type DemoRole } from './role-registry';
 
 const sessionLifetimeMs = 24 * 60 * 60 * 1000;
