@@ -13,6 +13,7 @@ import { resolveDemoActor } from '../auth/principal.adapters';
 import { LeaveFlowRepository } from '../db/leave-flow.repository';
 import { leaveDefinition } from '../leave/leave.definition';
 import { leaveRequestSchema, type LeaveRequest } from '../leave/leave.types';
+import { PostgresInboxAdapter } from '../notifications/postgres-inbox.adapter';
 import { leaveRuntime } from './temporal.client';
 
 export const publishedLeaveDefinition = publishDefinition({ definition: leaveDefinition });
@@ -34,12 +35,14 @@ export class FlowkitDemoConsumer implements FlowkitConsumer {
   readonly repository: LeaveFlowRepository;
   readonly tasks: FlowkitConsumer['tasks'];
   readonly outbox;
+  readonly inbox: PostgresInboxAdapter;
   private readonly consumer: FlowkitConsumer;
   private readonly actorResolver: FlowkitActorResolver;
 
   constructor(dependencies: FlowkitDemoConsumerDependencies = {}) {
     this.repository = dependencies.repository ?? new LeaveFlowRepository();
     this.outbox = this.repository.outbox;
+    this.inbox = new PostgresInboxAdapter(this.repository.sql);
     this.actorResolver = dependencies.actorResolver ?? { resolve: resolveDemoActor };
     const runtime = dependencies.runtime ?? leaveRuntime;
     const now = dependencies.now ?? (() => new Date().toISOString());

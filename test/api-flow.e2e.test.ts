@@ -53,6 +53,7 @@ class FakeConsumer {
   private task: any = null;
   readonly repository = {
     getRequest: async (id: string) => this.requests.get(id) ?? null,
+    listActivities: async () => [],
     tasks: {
       get: async (id: string) => this.task?.id === id ? this.task : null,
       find: async () => this.task,
@@ -69,9 +70,10 @@ class FakeConsumer {
     },
   };
   readonly outbox = { listForRecipient: async () => [] };
+  readonly inbox = { forUser: async () => [] };
 
   async start(input: any) {
-    this.requests.set(input.subject.id, { id: input.subject.id, flow_id: input.flowId, employee_id: input.actor.id, manager_id: input.subject.metadata.managerId });
+    this.requests.set(input.subject.id, { id: input.subject.id, flow_id: input.flowId, employee_id: input.actor.id, manager_id: input.subject.metadata.managerId, definition_hash: 'sha256:demo' });
     this.states.set(input.flowId, 'employee_draft');
     return this.view(input.flowId);
   }
@@ -148,6 +150,20 @@ beforeAll(async () => {
 afterAll(async () => { await app.close(); });
 
 describe('Flowkit API sessions and role paths', () => {
+  it('returns Flowkit activity and durable inbox views for a signed session', async () => {
+    const employee = await login(baseUrl, 'employee-1');
+    const { id } = await employee.post('/flows', fiveDayLeave);
+    const flow = await employee.get(`/flows/${id}`) as any;
+    const notifications = await employee.get('/notifications') as any;
+
+    expect(flow).toMatchObject({
+      id,
+      definitionHash: 'sha256:demo',
+      activities: [],
+    });
+    expect(notifications).toEqual({ inbox: [], deliveries: [] });
+  });
+
   it('rejects approval before the manager task is claimed', async () => {
     const employee = await login(baseUrl, 'employee-1');
     const { id } = await employee.post('/flows', fiveDayLeave);

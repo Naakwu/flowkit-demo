@@ -11,7 +11,12 @@ export class NotificationsController {
   constructor(private readonly consumer: FlowkitDemoConsumer) {}
 
   @Get()
-  list(@Req() req: { principal: AuthenticatedPrincipal }) {
-    return this.consumer.outbox.listForRecipient(req.principal.subjectId);
+  async list(@Req() req: { principal: AuthenticatedPrincipal }) {
+    const userId = req.principal.subjectId;
+    const [inbox, deliveries] = await Promise.all([
+      this.consumer.inbox.forUser(userId),
+      this.consumer.outbox.listForRecipient(userId),
+    ]);
+    return { inbox, deliveries };
   }
 }

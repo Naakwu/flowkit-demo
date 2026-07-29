@@ -45,7 +45,14 @@ export class FlowController {
     const request = await this.requireVisibleRequest(id, req.principal);
     try {
       const state = await this.consumer.getFlow(request.flow_id);
-      return { ...request, state: state.state, sequence: state.sequence, nextActions: state.nextActions };
+      return {
+        ...request,
+        definitionHash: request.definition_hash,
+        state: state.state,
+        sequence: state.sequence,
+        nextActions: state.nextActions,
+        activities: await this.consumer.repository.listActivities(id),
+      };
     } catch (error) {
       throw asFlowkitHttpException(error);
     }

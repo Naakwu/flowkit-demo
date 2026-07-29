@@ -23,6 +23,14 @@ export type LeaveRequestRow = {
   balance_days: number;
   stage: string;
   revision: number;
+  definition_hash: string | null;
+};
+export type LeaveActivity = {
+  actorId: string;
+  action: string;
+  fromStage: string;
+  toStage: string;
+  occurredAt: Date;
 };
 type PriorTransitionRow = { metadata: { nextState?: FlowState } | string };
 
@@ -93,12 +101,34 @@ export class LeaveFlowRepository {
 
   async getRequest(id: string): Promise<LeaveRequestRow | null> {
     const [row] = await this.sql<LeaveRequestRow[]>`
-      SELECT id, flow_id, employee_id, manager_id, start_date, end_date, business_days, reason, balance_days, stage, revision
+      SELECT id, flow_id, employee_id, manager_id, start_date, end_date, business_days, reason, balance_days, stage, revision, definition_hash
       FROM leave_requests
       WHERE id = ${id}
       LIMIT 1
     `;
     return row ?? null;
+  }
+
+  async listActivities(leaveId: string): Promise<LeaveActivity[]> {
+    const rows = await this.sql<Array<{
+      actor_id: string;
+      action: string;
+      from_stage: string;
+      to_stage: string;
+      created_at: Date | string;
+    }>>`
+      SELECT actor_id, action, from_stage, to_stage, created_at
+      FROM leave_transitions
+      WHERE leave_id = ${leaveId}
+      ORDER BY sequence ASC, id ASC
+    `;
+    return rows.map((row) => ({
+      actorId: row.actor_id,
+      action: row.action,
+      fromStage: row.from_stage,
+      toStage: row.to_stage,
+      occurredAt: new Date(row.created_at),
+    }));
   }
 
   async recordStageReady(input: RecordStageReadyInput): Promise<void> {
