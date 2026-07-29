@@ -60,7 +60,9 @@ export class LeaveFlowRepository {
       const existing = await this.findPriorResultInTransaction(tx, input.operationId);
       if (existing) return existing;
 
-      const request = await this.advanceRequest(tx, input);
+      const advanced = await this.advanceRequest(tx, input);
+      if ('prior' in advanced) return advanced.prior;
+      const request = advanced.request;
       await tx`
         INSERT INTO leave_transitions (leave_id, sequence, operation_key, action, actor_id, from_stage, to_stage, run_key)
         VALUES (
@@ -112,7 +114,7 @@ export class LeaveFlowRepository {
     return metadata?.nextState ? { state: metadata.nextState, created: false } : undefined;
   }
 
-  private async advanceRequest(tx: TransactionSql, input: RecordTransitionInput): Promise<LeaveRequestRow> {
+  private async advanceRequest(tx: TransactionSql, input: RecordTransitionInput): Promise<{ request: LeaveRequestRow } | { prior: RecordTransitionOutput }> {
     const [request] = await tx<LeaveRequestRow[]>`
       UPDATE leave_requests
       SET stage = ${input.nextState.stage}, revision = revision + 1,
@@ -122,9 +124,9 @@ export class LeaveFlowRepository {
         AND revision = ${input.sequence - 1}
       RETURNING id, employee_id, manager_id, stage, revision
     `;
-    if (request) return request;
+    if (request) return { request };
     const duplicate = await this.findPriorResultInTransaction(tx, input.operationId);
-    if (duplicate) return { id: input.subject.id, employee_id: '', manager_id: '', stage: duplicate.state.stage, revision: input.sequence };
+    if (duplicate) return { prior: duplicate };
     throw new LeaveFlowProjectionConflictError(input.workflowId, input.previousState.stage);
   }
 

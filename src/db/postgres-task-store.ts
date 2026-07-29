@@ -8,6 +8,7 @@ import type {
   TaskInboxPage,
   TaskInboxQuery,
   TaskInvitation,
+  TaskProjectionResult,
   TaskProjectionPlan,
   TaskReassignCommand,
   TaskReference,
@@ -44,6 +45,13 @@ type EventRow = {
   event_type: TaskEventType;
   actor_id: string | null;
   created_at: Date | string;
+};
+type ProjectionOperationRow = { result: TaskProjectionResult | string };
+type InvitationRow = {
+  id: string; task_id: string; subject_type: string; subject_id: string; role_key: string;
+  contact_kind: TaskInvitation['contactKind']; contact_hash: string; contact_hash_key_version: string;
+  token_hash: string; status: TaskInvitation['status']; expires_at: Date | string; source_key: string;
+  accepted_identity_id: string | null; accepted_at: Date | string | null; metadata: TaskInvitation['metadata'];
 };
 
 const asIso = (value: Date | string | null) => value === null ? null : value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -105,10 +113,20 @@ export class PostgresTaskStore implements TaskStore {
   }
 
   async applyProjectionInTransaction(tx: TransactionSql, input: { plan: TaskProjectionPlan; operationId: string }) {
-    const [prior] = await tx<{ task_id: string }[]>`
-      SELECT task_id FROM flow_task_events WHERE operation_key = ${input.operationId} LIMIT 1
+    const [claimedOperation] = await tx<{ operation_key: string }[]>`
+      INSERT INTO flow_task_projection_operations (operation_key, result)
+      VALUES (${input.operationId}, '{}'::jsonb)
+      ON CONFLICT (operation_key) DO NOTHING
+      RETURNING operation_key
     `;
-    if (prior) return { created: false, tasks: [], events: [] };
+    if (!claimedOperation) {
+      const [prior] = await tx<ProjectionOperationRow[]>`
+        SELECT result FROM flow_task_projection_operations WHERE operation_key = ${input.operationId} LIMIT 1
+      `;
+      const result = typeof prior?.result === 'string' ? JSON.parse(prior.result) : prior?.result;
+      if (result) return { ...result, created: false };
+      throw new Error(`Task projection operation ${input.operationId} was not readable after conflict.`);
+    }
 
     const tasks: FlowTask[] = [];
     const events: TaskEvent[] = [];
@@ -125,8 +143,7 @@ export class PostgresTaskStore implements TaskStore {
               assignee_id = ${nextStatus === 'open' ? null : current.assigneeId},
               revision = revision + 1,
               lifecycle_epoch = ${mutation.lifecycleEpoch},
-              due_at = ${mutation.dueAt ?? current.dueAt},
-              opened_operation_key = ${input.operationId}
+              due_at = ${mutation.dueAt ?? current.dueAt}
           WHERE id = ${current.id}
           RETURNING *, ${now}::timestamptz AS created_at, ${now}::timestamptz AS updated_at,
             CASE WHEN ${nextStatus} = 'claimed' THEN ${now}::timestamptz ELSE NULL END AS claimed_at,
@@ -152,17 +169,24 @@ export class PostgresTaskStore implements TaskStore {
       if (!plannedEvent) continue;
       const [event] = await tx<EventRow[]>`
         INSERT INTO flow_task_events (task_id, sequence, operation_key, event_type, actor_id)
-        VALUES (${row.id}, ${row.revision}, ${plannedEvent.operationId}, ${plannedEvent.eventType}, ${plannedEvent.actorId})
+        VALUES (${row.id}, ${row.revision}, ${`${input.operationId}:${index}`}, ${plannedEvent.eventType}, ${plannedEvent.actorId})
         ON CONFLICT (task_id, sequence) DO NOTHING
         RETURNING *
       `;
       if (event) events.push(this.event(event, task));
     }
-    return { created: true, tasks, events };
+    const result = { created: true, tasks, events };
+    await tx`
+      UPDATE flow_task_projection_operations
+      SET result = ${JSON.stringify(result)}::jsonb
+      WHERE operation_key = ${input.operationId}
+    `;
+    return result;
   }
 
   async claim(command: import('@flowkit/tasks').TaskClaimCommand) {
-    const [row] = await this.sql<TaskRow[]>`
+    return this.sql.begin(async (tx) => {
+      const [row] = await tx<TaskRow[]>`
       UPDATE flow_tasks
       SET status = 'claimed', assignee_id = ${command.actorId}, revision = revision + 1
       WHERE id = ${command.taskId}
@@ -171,15 +195,17 @@ export class PostgresTaskStore implements TaskStore {
         AND revision = ${command.expectedRevision}
       RETURNING *, ${command.now}::timestamptz AS created_at, ${command.now}::timestamptz AS updated_at,
         ${command.now}::timestamptz AS claimed_at, NULL::timestamptz AS completed_at
-    `;
-    if (!row) return { task: null, reason: 'conflict' as const };
-    const task = this.task(row);
-    await this.appendLifecycleEvent(task, 'claimed', command.operationId, command.actorId, command.now);
-    return { task };
+      `;
+      if (!row) return { task: null, reason: 'conflict' as const };
+      const task = this.task(row);
+      await this.appendLifecycleEvent(tx, task, 'claimed', command.operationId, command.actorId, command.now);
+      return { task };
+    });
   }
 
   async release(command: TaskReleaseCommand) {
-    const [row] = await this.sql<TaskRow[]>`
+    return this.sql.begin(async (tx) => {
+      const [row] = await tx<TaskRow[]>`
       UPDATE flow_tasks
       SET status = 'open', assignee_id = NULL, revision = revision + 1
       WHERE id = ${command.taskId}
@@ -188,25 +214,28 @@ export class PostgresTaskStore implements TaskStore {
         AND revision = ${command.expectedRevision}
       RETURNING *, ${command.now}::timestamptz AS created_at, ${command.now}::timestamptz AS updated_at,
         NULL::timestamptz AS claimed_at, NULL::timestamptz AS completed_at
-    `;
-    if (!row) return { task: null, reason: 'conflict' as const };
-    const task = this.task(row);
-    await this.appendLifecycleEvent(task, 'released', command.operationId, command.actorId, command.now);
-    return { task };
+      `;
+      if (!row) return { task: null, reason: 'conflict' as const };
+      const task = this.task(row);
+      await this.appendLifecycleEvent(tx, task, 'released', command.operationId, command.actorId, command.now);
+      return { task };
+    });
   }
 
   async reassign(command: TaskReassignCommand) {
-    const [row] = await this.sql<TaskRow[]>`
+    return this.sql.begin(async (tx) => {
+      const [row] = await tx<TaskRow[]>`
       UPDATE flow_tasks
       SET status = 'claimed', assignee_id = ${command.targetActorId}, revision = revision + 1
       WHERE id = ${command.taskId} AND revision = ${command.expectedRevision}
       RETURNING *, ${command.now}::timestamptz AS created_at, ${command.now}::timestamptz AS updated_at,
         ${command.now}::timestamptz AS claimed_at, NULL::timestamptz AS completed_at
-    `;
-    if (!row) return { task: null, reason: 'conflict' as const };
-    const task = this.task(row);
-    await this.appendLifecycleEvent(task, 'reassigned', command.operationId, command.actorId, command.now);
-    return { task };
+      `;
+      if (!row) return { task: null, reason: 'conflict' as const };
+      const task = this.task(row);
+      await this.appendLifecycleEvent(tx, task, 'reassigned', command.operationId, command.actorId, command.now);
+      return { task };
+    });
   }
 
   async history(taskId: string): Promise<TaskEvent[]> {
@@ -249,20 +278,57 @@ export class PostgresTaskStore implements TaskStore {
     return row ? this.event(row, this.task(row, 'flowkit-demo', input.subjectType)) : null;
   }
 
-  async createInvitation(_input: Omit<TaskInvitation, 'id' | 'status' | 'acceptedIdentityId' | 'acceptedAt'>): Promise<TaskInvitation> {
-    throw new Error('Task invitations are not part of the Flowkit demo schema.');
+  async createInvitation(input: Omit<TaskInvitation, 'id' | 'status' | 'acceptedIdentityId' | 'acceptedAt'>): Promise<TaskInvitation> {
+    const [inserted] = await this.sql<InvitationRow[]>`
+      INSERT INTO flow_task_invitations (
+        id, task_id, subject_type, subject_id, role_key, contact_kind, contact_hash,
+        contact_hash_key_version, token_hash, status, expires_at, source_key, metadata
+      ) VALUES (
+        ${`invitation-${randomUUID()}`}, ${input.taskId}, ${input.subjectType}, ${input.subjectId}, ${input.role},
+        ${input.contactKind}, ${input.contactHash}, ${input.contactHashKeyVersion}, ${input.tokenHash}, 'pending',
+        ${input.expiresAt}, ${input.sourceKey}, ${JSON.stringify(input.metadata)}::jsonb
+      ) ON CONFLICT (source_key) DO NOTHING RETURNING *
+    `;
+    if (inserted) return this.invitation(inserted);
+    const [existing] = await this.sql<InvitationRow[]>`SELECT * FROM flow_task_invitations WHERE source_key = ${input.sourceKey} LIMIT 1`;
+    if (!existing) throw new Error(`Task invitation ${input.sourceKey} was not readable after conflict.`);
+    return this.invitation(existing);
   }
 
-  async getInvitationByTokenHash(_tokenHash: string): Promise<TaskInvitation | null> {
-    throw new Error('Task invitations are not part of the Flowkit demo schema.');
+  async getInvitationByTokenHash(tokenHash: string): Promise<TaskInvitation | null> {
+    const [row] = await this.sql<InvitationRow[]>`SELECT * FROM flow_task_invitations WHERE token_hash = ${tokenHash} LIMIT 1`;
+    return row ? this.invitation(row) : null;
   }
 
-  async redeemInvitation(_input: { invitationId: string; identityId: string; expectedExpiry: string; now: string; operationId: string }): Promise<{ invitation: TaskInvitation; task: FlowTask } | null> {
-    throw new Error('Task invitations are not part of the Flowkit demo schema.');
+  async redeemInvitation(input: { invitationId: string; identityId: string; expectedExpiry: string; now: string; operationId: string }): Promise<{ invitation: TaskInvitation; task: FlowTask } | null> {
+    return this.sql.begin(async (tx) => {
+      const [invitation] = await tx<InvitationRow[]>`
+        UPDATE flow_task_invitations
+        SET status = 'accepted', accepted_identity_id = ${input.identityId}, accepted_at = ${input.now}
+        WHERE id = ${input.invitationId} AND status = 'pending'
+          AND expires_at = ${input.expectedExpiry}::timestamptz AND expires_at >= ${input.now}::timestamptz
+        RETURNING *
+      `;
+      if (!invitation) return null;
+      const [row] = await tx<TaskRow[]>`
+        UPDATE flow_tasks SET status = 'claimed', assignee_id = ${input.identityId}, revision = revision + 1
+        WHERE id = ${invitation.task_id} AND status = 'open'
+        RETURNING *, ${input.now}::timestamptz AS created_at, ${input.now}::timestamptz AS updated_at,
+          ${input.now}::timestamptz AS claimed_at, NULL::timestamptz AS completed_at
+      `;
+      if (!row) throw new Error('Task invitation could not claim an open task.');
+      const task = this.task(row, 'flowkit-demo', invitation.subject_type);
+      await this.appendLifecycleEvent(tx, task, 'invitation_accepted', input.operationId, input.identityId, input.now);
+      return { invitation: this.invitation(invitation), task };
+    });
   }
 
-  async revokeInvitation(_input: { invitationId: string; now: string; operationId: string }): Promise<void> {
-    throw new Error('Task invitations are not part of the Flowkit demo schema.');
+  async revokeInvitation(input: { invitationId: string; now: string; operationId: string }): Promise<void> {
+    await this.sql`
+      UPDATE flow_task_invitations
+      SET status = 'revoked', revoked_at = ${input.now}
+      WHERE id = ${input.invitationId} AND status = 'pending'
+    `;
   }
 
   async close(): Promise<void> {
@@ -302,8 +368,17 @@ export class PostgresTaskStore implements TaskStore {
     };
   }
 
-  private async appendLifecycleEvent(task: FlowTask, eventType: TaskEventType, operationId: string, actorId: string, now: string): Promise<void> {
-    await this.sql`
+  private invitation(row: InvitationRow): TaskInvitation {
+    return {
+      id: row.id, taskId: row.task_id, subjectType: row.subject_type, subjectId: row.subject_id, role: row.role_key,
+      contactKind: row.contact_kind, contactHash: row.contact_hash, contactHashKeyVersion: row.contact_hash_key_version,
+      tokenHash: row.token_hash, status: row.status, expiresAt: asIso(row.expires_at)!, sourceKey: row.source_key,
+      acceptedIdentityId: row.accepted_identity_id, acceptedAt: asIso(row.accepted_at), metadata: row.metadata,
+    };
+  }
+
+  private async appendLifecycleEvent(executor: Executor, task: FlowTask, eventType: TaskEventType, operationId: string, actorId: string, now: string): Promise<void> {
+    await executor`
       INSERT INTO flow_task_events (task_id, sequence, operation_key, event_type, actor_id, created_at)
       VALUES (${task.id}, ${task.revision}, ${operationId}, ${eventType}, ${actorId}, ${now})
       ON CONFLICT (task_id, sequence) DO NOTHING

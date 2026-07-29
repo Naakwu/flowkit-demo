@@ -122,6 +122,15 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
     return rows.length;
   }
 
+  async listForRecipient(recipientId: string): Promise<Array<{ id: string; status: OutboxRow['status']; subject: string }>> {
+    const rows = await this.sql<OutboxRow[]>`
+      SELECT * FROM notification_outbox
+      WHERE payload->'recipient'->>'canonicalKey' = ${recipientId}
+      ORDER BY available_at ASC
+    `;
+    return rows.map((row) => ({ id: row.id, status: row.status, subject: envelopeOf(row.payload).rendered.subject }));
+  }
+
   async close(): Promise<void> {
     if (this.ownsClient) await this.sql.end({ timeout: 5 });
   }
