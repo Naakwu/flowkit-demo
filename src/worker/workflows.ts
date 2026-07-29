@@ -1,3 +1,10 @@
 import { createFlowkitWorkflow } from '@flowkit/temporal/workflow';
-import { leaveDefinition, leavePolicies, leaveGuards } from '../leave/leave.definition';
-export const leaveWorkflow = createFlowkitWorkflow({ registries: { policies: leavePolicies, guards: leaveGuards, rules: {}, steps: {} } as any, activityTaskQueue: 'flowkit-demo' });
+import { loadConfig } from '../config';
+import { leavePolicies, leaveGuards } from '../leave/leave.definition';
+
+const { TEMPORAL_TASK_QUEUE } = loadConfig();
+
+export const leaveWorkflow = createFlowkitWorkflow({
+  registries: { policies: leavePolicies, guards: leaveGuards, rules: {} },
+  activityTaskQueue: TEMPORAL_TASK_QUEUE,
+});
