@@ -1,4 +1,5 @@
 import { loadConfig } from '../config';
+import { RuntimeHealthRepository } from '../db/runtime-health.repository';
 import { activities, validateWorkerRegistries } from './activities';
 import { NativeConnection, Worker, bundleWorkflowCode } from '@temporalio/worker';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +14,20 @@ export async function startWorker() {
 
 if (import.meta.main) {
   const worker = await startWorker();
-  process.stdout.write('flowkit-demo Temporal worker ready\n');
-  await worker.run();
+  const health = new RuntimeHealthRepository();
+  const heartbeat = async () => health.heartbeat('flowkit-runtime');
+  await heartbeat();
+  const interval = setInterval(() => { void heartbeat(); }, 10_000);
+  const stop = () => { void worker.shutdown(); };
+  process.once('SIGTERM', stop);
+  process.once('SIGINT', stop);
+  try {
+    process.stdout.write('flowkit-demo Flowkit runtime ready\n');
+    await worker.run();
+  } finally {
+    clearInterval(interval);
+    process.off('SIGTERM', stop);
+    process.off('SIGINT', stop);
+    await health.close();
+  }
 }

@@ -14,6 +14,9 @@ export class RuntimeController {
       this.health.health('flowkit-runtime'),
       this.health.health('delivery-worker'),
     ]);
-    return { flowkitRuntime, delivery };
+    return {
+      flowkitRuntime: { ready: flowkitRuntime.ready, checkedAt: flowkitRuntime.checkedAt },
+      delivery: { ready: delivery.ready, checkedAt: delivery.checkedAt },
+    };
   }
 }

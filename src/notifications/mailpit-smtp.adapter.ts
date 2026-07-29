@@ -1,0 +1,69 @@
+import type { NotificationChannelAdapter, NotificationDeliveryEnvelope } from '@flowkit/notify';
+import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
+
+import { loadConfig, type DemoConfig } from '../config';
+
+const require = createRequire(import.meta.url);
+
+export type SmtpMail = {
+  from: string;
+  to: string;
+  subject: string;
+  text: string;
+  messageId: string;
+  headers: Record<string, string>;
+};
+
+export interface SmtpTransport {
+  sendMail(message: SmtpMail): Promise<{ messageId?: string }>;
+  close?(): void | Promise<void>;
+}
+
+type NodemailerModule = {
+  createTransport(options: { host: string; port: number; secure: boolean }): SmtpTransport;
+};
+
+const nodemailer = require('nodemailer') as NodemailerModule;
+const messageIdFor = (dedupeKey: string) => `<${createHash('sha256').update(dedupeKey).digest('hex')}@flowkit-demo.local>`;
+
+/** Mailpit SMTP channel adapter. A stable Message-ID and dedupe cache make retries within a worker idempotent. */
+export class MailpitSmtpAdapter implements NotificationChannelAdapter {
+  readonly channel = 'email';
+  readonly idempotent = true;
+  private readonly sent = new Map<string, string>();
+  private readonly transport: SmtpTransport;
+  private readonly from: string;
+
+  constructor(options: { config?: DemoConfig; transport?: SmtpTransport; from?: string } = {}) {
+    const config = options.config ?? (options.transport ? undefined : loadConfig());
+    this.transport = options.transport ?? nodemailer.createTransport({
+      host: config?.SMTP_HOST ?? 'localhost',
+      port: config?.SMTP_PORT ?? 1025,
+      secure: false,
+    });
+    this.from = options.from ?? config?.SMTP_FROM ?? 'notifications@flowkit-demo.test';
+  }
+
+  async send(input: { envelope: NotificationDeliveryEnvelope; attemptId: string }) {
+    const { envelope } = input;
+    const prior = this.sent.get(envelope.dedupeKey);
+    if (prior) return { providerMessageId: prior };
+
+    const result = await this.transport.sendMail({
+      from: this.from,
+      to: envelope.recipient.address,
+      subject: envelope.rendered.subject,
+      text: envelope.rendered.body,
+      messageId: messageIdFor(envelope.dedupeKey),
+      headers: { 'X-Flowkit-Dedupe-Key': envelope.dedupeKey },
+    });
+    const providerMessageId = result.messageId ?? messageIdFor(envelope.dedupeKey);
+    this.sent.set(envelope.dedupeKey, providerMessageId);
+    return { providerMessageId };
+  }
+
+  async close(): Promise<void> {
+    await this.transport.close?.();
+  }
+}

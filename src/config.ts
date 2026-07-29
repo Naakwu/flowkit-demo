@@ -12,7 +12,9 @@ const schema = z.object({
   DATABASE_URL: z.string().default('postgresql://flowkit_demo:flowkit_demo@localhost:5441/flowkit_demo'),
   TEMPORAL_ADDRESS: z.string().default('localhost:7233'), TEMPORAL_NAMESPACE: z.string().default('flowkit-demo'), TEMPORAL_TASK_QUEUE: z.string().default('flowkit-demo'),
   BETTER_AUTH_SECRET: z.string().min(32).default('flowkit-demo-local-secret-change-me-32-characters'), BETTER_AUTH_URL: z.string().url().default('http://localhost:3011'),
-  SMTP_HOST: z.string().default('localhost'), SMTP_PORT: z.coerce.number().int().positive().default(1025), MAILPIT_URL: z.string().url().default('http://localhost:8025'),
+  SMTP_HOST: z.string().default('localhost'), SMTP_PORT: z.coerce.number().int().positive().default(1025), SMTP_FROM: z.string().email().default('notifications@flowkit-demo.test'), MAILPIT_URL: z.string().url().default('http://localhost:8025'),
+  FLOWKIT_DEMO_NOTIFY_ACTIVE_POLL_MS: z.coerce.number().int().positive().default(100),
+  FLOWKIT_DEMO_NOTIFY_IDLE_POLL_MS: z.coerce.number().int().positive().default(1_000),
 }).strict();
 export type DemoConfig = z.infer<typeof schema>;
 
