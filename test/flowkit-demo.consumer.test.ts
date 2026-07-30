@@ -6,7 +6,7 @@ import { Worker } from '@temporalio/worker';
 import { LeaveFlowRepository } from '../src/db/leave-flow.repository';
 import { createFlowkitDemoConsumer, publishedLeaveDefinition } from '../src/flow/flowkit-demo.consumer';
 import { createLeaveActivities } from '../src/worker/activities';
-import { leaveWorkflow } from '../src/worker/workflows';
+import { leaveWorkflowType } from '../src/worker/workflow-type';
 import { clearDurableLeaveServiceData, durableLeaveServiceDatabase } from './durable-test-database';
 
 const sql = await durableLeaveServiceDatabase('Flowkit demo consumer');
@@ -60,7 +60,7 @@ durableTests('Flowkit demo consumer', () => {
     const runtime = createFlowkitTemporalRuntime({
       client: environment.client,
       taskQueue,
-      workflowType: leaveWorkflow,
+      workflowType: leaveWorkflowType,
       healthProbe: async () => ({ ready: true, checkedAt: new Date().toISOString() }),
     });
     const consumer = createFlowkitDemoConsumer({ repository, runtime });

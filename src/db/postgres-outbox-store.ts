@@ -4,6 +4,7 @@ import type { ClaimedDelivery, JsonValue, NotificationDeliveryEnvelope, Notifica
 import type { Sql, TransactionSql } from 'postgres';
 
 import { createDemoDatabaseClient } from './client';
+import { jsonb } from './jsonb';
 
 type Executor = Sql | TransactionSql;
 type OutboxRow = {
@@ -43,7 +44,7 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
     for (const envelope of envelopes) {
       const [row] = await executor<{ id: string }[]>`
         INSERT INTO notification_outbox (id, dedupe_key, channel, status, attempt_count, available_at, payload)
-        VALUES (${`delivery-${randomUUID()}`}, ${envelope.dedupeKey}, ${envelope.channel}, 'pending', 0, now(), ${JSON.stringify(envelope)}::jsonb)
+        VALUES (${`delivery-${randomUUID()}`}, ${envelope.dedupeKey}, ${envelope.channel}, 'pending', 0, now(), ${jsonb(this.sql, envelope)})
         ON CONFLICT (dedupe_key) DO NOTHING
         RETURNING id
       `;

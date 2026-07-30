@@ -10,6 +10,8 @@ COPY packages/flowkit-notify/package.json packages/flowkit-notify/package.json
 COPY packages/flowkit-notify/dist packages/flowkit-notify/dist
 COPY packages/flowkit-auth/package.json packages/flowkit-auth/package.json
 COPY packages/flowkit-auth/dist packages/flowkit-auth/dist
+COPY packages/flowkit-consumer/package.json packages/flowkit-consumer/package.json
+COPY packages/flowkit-consumer/dist packages/flowkit-consumer/dist
 COPY packages/flowkit-demo/package.json packages/flowkit-demo/package.json
 COPY packages/flowkit-demo/tsconfig.json packages/flowkit-demo/tsconfig.build.json packages/flowkit-demo/.env.example packages/flowkit-demo/
 COPY packages/flowkit-demo/src packages/flowkit-demo/src
@@ -22,7 +24,7 @@ RUN bun install --ignore-scripts
 # packages remain sibling package directories. Link the consumer's resolved
 # dependency tree into those package directories so ESM resolution from their
 # dist files can resolve @flowkit/core and their external dependencies.
-RUN for package in flowkit-core flowkit-temporal flowkit-tasks flowkit-notify flowkit-auth; do \
+RUN for package in flowkit-core flowkit-temporal flowkit-tasks flowkit-notify flowkit-auth flowkit-consumer; do \
       ln -s /app/packages/flowkit-demo/node_modules /app/packages/$package/node_modules; \
     done
 CMD ["bun", "run", "src/api/main.ts"]

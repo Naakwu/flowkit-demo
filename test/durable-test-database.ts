@@ -22,10 +22,11 @@ export async function durableTestDatabase(label: string, requiredTables: string[
   }
 
   const sql = postgres(config.DATABASE_URL, { max: 5, connect_timeout: 2 });
+  // The element type has to be stated: an untyped parameter array leaves `ANY` with no operator.
   const rows = await sql<{ table_name: string }[]>`
     SELECT table_name
     FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = ANY(${sql.array(requiredTables)})
+    WHERE table_schema = 'public' AND table_name = ANY(${requiredTables}::text[])
   `;
   const present = new Set(rows.map((row) => row.table_name));
   const missing = requiredTables.filter((table) => !present.has(table));

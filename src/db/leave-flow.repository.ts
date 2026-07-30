@@ -8,6 +8,7 @@ import { leaveDefinition } from '../leave/leave.definition';
 import type { LeaveRequest } from '../leave/leave.types';
 import { notificationTemplates } from '../notifications/templates';
 import { createDemoDatabaseClient } from './client';
+import { jsonb } from './jsonb';
 import { PostgresOutboxStore } from './postgres-outbox-store';
 import { PostgresTaskStore } from './postgres-task-store';
 
@@ -42,6 +43,16 @@ export class LeaveFlowProjectionConflictError extends Error {
 }
 
 /**
+ * A Flowkit operation id is unique within its flow, not globally: the interpreter derives ids such
+ * as `rule:1:1` from a flow's own step sequence, so two flows reaching the same step produce the
+ * same id. Every durable operation key in this schema is globally unique, so qualify the id with
+ * its flow before it reaches the ledger — the same scoping the notification source key uses.
+ */
+export function scopeOperationId(flowId: string, operationId: string): string {
+  return `${flowId}:${operationId}`;
+}
+
+/**
  * Durable leave read-model projection. The transition, audit, task mutations,
  * and notification envelopes share one PostgreSQL transaction.
  */
@@ -69,7 +80,7 @@ export class LeaveFlowRepository {
       SELECT a.metadata
       FROM leave_transitions t
       JOIN audit_events a ON a.action = 'flowkit.transition' AND a.metadata->>'operationId' = t.operation_key
-      WHERE t.operation_key = ${operationId}
+      WHERE t.operation_key = ${scopeOperationId(workflowId, operationId)}
       LIMIT 1
     `;
     const metadata = typeof row?.metadata === 'string' ? JSON.parse(row.metadata) : row?.metadata;
@@ -78,6 +89,7 @@ export class LeaveFlowRepository {
 
   async createRequest(input: { id: string; flowId: string; request: LeaveRequest; operationId: string; definitionHash: `sha256:${string}` }): Promise<void> {
     const state = buildInitialState(this.definition);
+    const operationKey = scopeOperationId(input.flowId, input.operationId);
     await this.sql.begin(async (tx) => {
       await tx`
         INSERT INTO leave_requests (
@@ -86,16 +98,16 @@ export class LeaveFlowRepository {
         ) VALUES (
           ${input.id}, ${input.request.employeeId}, ${input.request.managerId}, ${input.request.startDate},
           ${input.request.endDate}, ${input.request.businessDays}, ${input.request.reason},
-          ${input.request.balanceDays}, ${state.stage}, 0, ${input.operationId}, ${input.flowId}, ${input.definitionHash}
+          ${input.request.balanceDays}, ${state.stage}, 0, ${operationKey}, ${input.flowId}, ${input.definitionHash}
         )
         ON CONFLICT (id) DO NOTHING
       `;
       const plan = planTaskProjection({
         namespace: 'flowkit-demo', flowId: input.flowId, subject: { type: 'leave', id: input.id },
-        definition: this.definition, operationId: input.operationId, transitionSequence: 0,
+        definition: this.definition, operationId: operationKey, transitionSequence: 0,
         action: 'open', actorId: input.request.employeeId, previousState: state, nextState: state, metadata: {},
       }, null);
-      await this.tasks.applyProjectionInTransaction(tx, { plan, operationId: input.operationId });
+      await this.tasks.applyProjectionInTransaction(tx, { plan, operationId: operationKey });
     });
   }
 
@@ -136,7 +148,7 @@ export class LeaveFlowRepository {
       INSERT INTO demo_runtime_state (state_key, state_value, updated_at)
       VALUES (
         ${`leave-stage-ready:${input.workflowId}`},
-        ${JSON.stringify({ stage: input.state.stage, entryEpoch: input.entryEpoch, slaDeadline: input.slaDeadline ?? null })}::jsonb,
+        ${jsonb(this.sql, { stage: input.state.stage, entryEpoch: input.entryEpoch, slaDeadline: input.slaDeadline ?? null })},
         now()
       )
       ON CONFLICT (state_key) DO UPDATE
@@ -171,8 +183,9 @@ export class LeaveFlowRepository {
   }
 
   async recordTransition(input: RecordTransitionInput): Promise<RecordTransitionOutput> {
+    const operationKey = scopeOperationId(input.workflowId, input.operationId);
     return this.sql.begin(async (tx) => {
-      const existing = await this.findPriorResultInTransaction(tx, input.operationId);
+      const existing = await this.findPriorResultInTransaction(tx, operationKey);
       if (existing) return existing;
 
       const advanced = await this.advanceRequest(tx, input);
@@ -181,7 +194,7 @@ export class LeaveFlowRepository {
       await tx`
         INSERT INTO leave_transitions (leave_id, sequence, operation_key, action, actor_id, from_stage, to_stage, run_key)
         VALUES (
-          ${input.subject.id}, ${input.sequence}, ${input.operationId}, ${input.command.action},
+          ${input.subject.id}, ${input.sequence}, ${operationKey}, ${input.command.action},
           ${input.command.actorId ?? 'system'}, ${input.previousState.stage}, ${input.nextState.stage}, ${input.runId}
         )
       `;
@@ -189,11 +202,11 @@ export class LeaveFlowRepository {
         INSERT INTO audit_events (actor_id, action, entity_id, metadata)
         VALUES (
           ${input.command.actorId ?? 'system'}, 'flowkit.transition', ${input.subject.id},
-          ${JSON.stringify({
-            workflowId: input.workflowId, runId: input.runId, operationId: input.operationId,
+          ${jsonb(this.sql, {
+            workflowId: input.workflowId, runId: input.runId, operationId: operationKey,
             previousState: input.previousState, nextState: input.nextState,
             command: input.command, transition: input.transition,
-          })}::jsonb
+          })}
         )
       `;
       const previousRole = input.previousState.pendingRole;
@@ -203,11 +216,11 @@ export class LeaveFlowRepository {
       }) : null;
       const taskPlan = planTaskProjection({
         namespace: 'flowkit-demo', flowId: input.workflowId, subject: { type: 'leave', id: input.subject.id },
-        definition: this.definition, operationId: input.operationId, transitionSequence: input.sequence,
+        definition: this.definition, operationId: operationKey, transitionSequence: input.sequence,
         action: input.command.action, actorId: input.command.actorId ?? null,
         previousState: input.previousState, nextState: input.nextState, metadata: {},
       }, current);
-      await this.tasks.applyProjectionInTransaction(tx, { plan: taskPlan, operationId: input.operationId });
+      await this.tasks.applyProjectionInTransaction(tx, { plan: taskPlan, operationId: operationKey });
       await this.outbox.insertInTransaction(await this.notificationEnvelopes(input, request), tx);
       return { state: input.nextState, created: true };
     });
@@ -217,12 +230,12 @@ export class LeaveFlowRepository {
     if (this.ownsClient) await this.sql.end({ timeout: 5 });
   }
 
-  private async findPriorResultInTransaction(tx: TransactionSql, operationId: string): Promise<RecordTransitionOutput | undefined> {
+  private async findPriorResultInTransaction(tx: TransactionSql, operationKey: string): Promise<RecordTransitionOutput | undefined> {
     const [row] = await tx<PriorTransitionRow[]>`
       SELECT a.metadata
       FROM leave_transitions t
       JOIN audit_events a ON a.action = 'flowkit.transition' AND a.metadata->>'operationId' = t.operation_key
-      WHERE t.operation_key = ${operationId}
+      WHERE t.operation_key = ${operationKey}
       LIMIT 1
     `;
     const metadata = typeof row?.metadata === 'string' ? JSON.parse(row.metadata) : row?.metadata;
@@ -240,7 +253,7 @@ export class LeaveFlowRepository {
       RETURNING id, employee_id, manager_id, stage, revision
     `;
     if (request) return { request };
-    const duplicate = await this.findPriorResultInTransaction(tx, input.operationId);
+    const duplicate = await this.findPriorResultInTransaction(tx, scopeOperationId(input.workflowId, input.operationId));
     if (duplicate) return { prior: duplicate };
     throw new LeaveFlowProjectionConflictError(input.workflowId, input.previousState.stage);
   }

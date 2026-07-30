@@ -1,6 +1,7 @@
 import type { Sql } from 'postgres';
 
 import { createDemoDatabaseClient } from './client';
+import { jsonb } from './jsonb';
 
 export type RuntimeHealth = {
   name: string;
@@ -27,7 +28,7 @@ export class RuntimeHealthRepository {
     const heartbeatAt = now.toISOString();
     await this.sql`
       INSERT INTO demo_runtime_state (state_key, state_value, updated_at)
-      VALUES (${`health:${name}`}, ${JSON.stringify({ heartbeatAt })}::jsonb, ${heartbeatAt})
+      VALUES (${`health:${name}`}, ${jsonb(this.sql, { heartbeatAt })}, ${heartbeatAt})
       ON CONFLICT (state_key) DO UPDATE
       SET state_value = EXCLUDED.state_value, updated_at = EXCLUDED.updated_at
     `;

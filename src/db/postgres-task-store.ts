@@ -18,6 +18,7 @@ import type {
 import type { Sql, TransactionSql } from 'postgres';
 
 import { createDemoDatabaseClient } from './client';
+import { jsonb } from './jsonb';
 
 type Executor = Sql | TransactionSql;
 type TaskRow = {
@@ -178,7 +179,7 @@ export class PostgresTaskStore implements TaskStore {
     const result = { created: true, tasks, events };
     await tx`
       UPDATE flow_task_projection_operations
-      SET result = ${JSON.stringify(result)}::jsonb
+      SET result = ${jsonb(this.sql, result)}
       WHERE operation_key = ${input.operationId}
     `;
     return result;
@@ -291,7 +292,7 @@ export class PostgresTaskStore implements TaskStore {
       ) VALUES (
         ${`invitation-${randomUUID()}`}, ${input.taskId}, ${input.subjectType}, ${input.subjectId}, ${input.role},
         ${input.contactKind}, ${input.contactHash}, ${input.contactHashKeyVersion}, ${input.tokenHash}, 'pending',
-        ${input.expiresAt}, ${input.sourceKey}, ${JSON.stringify(input.metadata)}::jsonb
+        ${input.expiresAt}, ${input.sourceKey}, ${jsonb(this.sql, input.metadata ?? {})}
       ) ON CONFLICT (source_key) DO NOTHING RETURNING *
     `;
     if (inserted) return this.invitation(inserted);
