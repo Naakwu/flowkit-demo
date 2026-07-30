@@ -22,6 +22,10 @@ describe('Flowkit reference console contract', () => {
     expect(app).toContain("'/notifications'");
     expect(app).toContain("'/runtime'");
     expect(app).toContain('pollForInboxDelivery');
+    // A Flowkit rule advances the automatic stages with no operator input, so the console has to
+    // keep reading the flow instead of stranding the page on the intermediate stage.
+    expect(app).toContain('pollForSettledStage');
+    expect(app).toContain('policy_evaluation');
     expect(app).toContain('mailpitUrl');
     expect(app).not.toMatch(/x-demo-user|x-demo-role|temporal|task queue/i);
   });

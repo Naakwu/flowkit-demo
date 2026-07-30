@@ -10,6 +10,8 @@ const stageLabel = {
   employee_draft: 'DRAFT', policy_evaluation: 'EVALUATING', manager_review: 'MANAGER REVIEW',
   fulfillment: 'FULFILLMENT', approved: 'APPROVED', rejected: 'REJECTED', withdrawn: 'WITHDRAWN',
 };
+/** Stages Flowkit leaves and re-enters on its own; no human action moves the flow out of them. */
+const automaticStages = ['policy_evaluation', 'fulfillment'];
 const state = {
   selectedId: null,
   operatorId: 'employee-1',
@@ -18,6 +20,7 @@ const state = {
   tasks: [],
   pendingInboxDelivery: null,
   inboxPollSequence: 0,
+  flowPollSequence: 0,
 };
 const $ = (selector) => document.querySelector(selector);
 const currentRole = () => state.principal?.role;
@@ -140,6 +143,31 @@ async function loadFlow(id) {
   const record = await api(`/flows/${id}`);
   renderFlow(record);
   return record;
+}
+
+/**
+ * A Flowkit rule advances the automatic stages without any operator input, so the console keeps
+ * reading the flow until it settles on a stage a human owns. Without this the page would sit on the
+ * intermediate stage until someone pressed Refresh.
+ */
+async function pollForSettledStage(flowId) {
+  state.flowPollSequence += 1;
+  const sequence = state.flowPollSequence;
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline && state.flowPollSequence === sequence && state.selectedId === flowId) {
+    let record;
+    try {
+      record = await loadFlow(flowId);
+    } catch (error) {
+      toast(error.message, true);
+      return;
+    }
+    if (!automaticStages.includes(record.state.stage)) {
+      await refreshQueues();
+      return;
+    }
+    await pause(500);
+  }
 }
 
 async function transitionRecord(id, action) {
@@ -289,15 +317,24 @@ function renderHealth(status) {
   $('#runtime-list').innerHTML = `${renderServiceStatus('Flowkit runtime', runtime)}${renderServiceStatus('Delivery worker', delivery)}`;
 }
 
+/** Re-reads the panels that are not tied to the selected flow. */
+async function refreshQueues() {
+  const [tasks, notifications, status] = await Promise.all([api('/tasks'), api('/notifications'), api('/runtime')]);
+  renderTasks(tasks);
+  renderNotifications(notifications);
+  renderHealth(status);
+  return { tasks, notifications, status };
+}
+
 async function refresh({ reloadFlow = false } = {}) {
   try {
-    const [tasks, notifications, status] = await Promise.all([api('/tasks'), api('/notifications'), api('/runtime')]);
-    renderTasks(tasks);
-    renderNotifications(notifications);
-    renderHealth(status);
-    if (state.selectedId && (reloadFlow || state.flow)) await loadFlow(state.selectedId);
+    const panels = await refreshQueues();
+    if (state.selectedId && (reloadFlow || state.flow)) {
+      const record = await loadFlow(state.selectedId);
+      if (automaticStages.includes(record.state.stage)) void pollForSettledStage(record.id);
+    }
     void pollForInboxDelivery();
-    return { tasks, notifications, status };
+    return panels;
   } catch (error) {
     toast(error.message, true);
   }

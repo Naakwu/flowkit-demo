@@ -69,6 +69,29 @@ heartbeats, and an approval email visible through Mailpit. For non-default host 
 `FLOWKIT_DEMO_URL` (for example `http://localhost:3012`) and
 `FLOWKIT_DEMO_MAILPIT_URL` (for example `http://localhost:8026`) before running the suite.
 
+All three specs passed against the live Compose stack on July 30, 2026, and passed again
+back-to-back without resetting the database: every queue interaction is scoped to the request the
+spec created, so the proof tolerates work left by earlier runs.
+
+The console polls a flow while Flowkit's rule advances it through `policy_evaluation` and
+`fulfillment`, because no operator action leaves those stages.
+
+### Durable database tests
+
+`bun test test` skips the durable tier by default. It needs a separate migrated database and,
+for the specs that drive a real flow, a worker bound to that same database:
+
+```bash
+FLOWKIT_DEMO_DURABLE_TESTS=true \
+DATABASE_URL=postgresql://flowkit_demo:flowkit_demo@localhost:5441/flowkit_demo_test \
+bun test test/leave-flow-operation-scope.test.ts test/postgres-task-store.test.ts
+```
+
+The store, outbox, and operation-scope specs pass this way. Four specs that expect a live worker
+(`scenario-runner`, `workflow.resilience`, `notifications.integration`, `durable-leave-service`)
+still time out, because the Compose worker is bound to `flowkit_demo` rather than the test
+database; running them needs a worker started against `flowkit_demo_test`.
+
 ## Package boundary
 
 `package-contracts.json` and `test/package-contracts.preflight.test.ts` enumerate the public

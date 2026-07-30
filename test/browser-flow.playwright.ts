@@ -5,6 +5,15 @@ const mailpitUrl = new URL(process.env.FLOWKIT_DEMO_MAILPIT_URL ?? 'http://local
 
 type ReviewDecision = 'approve' | 'reject';
 
+/**
+ * The suite runs against a shared, already-running stack, so the manager queue legitimately holds
+ * work from earlier runs. Every queue interaction is scoped to the request under test rather than
+ * assuming a pristine database.
+ */
+function claimButtonFor(page: Page, requestId: string) {
+  return page.locator('.task-row', { hasText: requestId }).getByRole('button', { name: 'Claim task' });
+}
+
 async function createAndSubmitMultiDayLeave(page: Page): Promise<string> {
   await page.goto(demoUrl);
   await expect(page.getByText('Demo operator · Employee')).toBeVisible();
@@ -29,8 +38,8 @@ async function reviewLeave(page: Page, decision: ReviewDecision): Promise<string
 
   await page.getByLabel('Switch demo operator').selectOption('manager-1');
   await expect(page.getByText('Demo operator · Manager')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Claim task' })).toBeVisible();
-  await page.getByRole('button', { name: 'Claim task' }).click();
+  await expect(claimButtonFor(page, requestId)).toBeVisible();
+  await claimButtonFor(page, requestId).click();
 
   const buttonName = decision === 'approve' ? 'Approve request' : 'Reject request';
   await expect(page.getByRole('button', { name: buttonName })).toBeVisible();

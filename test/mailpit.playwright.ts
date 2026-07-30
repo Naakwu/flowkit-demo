@@ -10,11 +10,15 @@ test('Mailpit exposes the approval email delivered for a browser-created Flowkit
   await page.getByLabel('Business days').fill('5');
   await page.getByLabel('Reason').fill(`Mailpit reference journey ${Date.now()}`);
   await page.getByRole('button', { name: 'Create request' }).click();
+  // The submit control only renders once the console has read the created flow back.
+  await expect(page.getByRole('button', { name: 'Submit request' })).toBeVisible();
   const requestId = (await page.locator('#flow-title').textContent())?.trim();
   if (!requestId) throw new Error('Flowkit did not return a leave request identifier.');
   await page.getByRole('button', { name: 'Submit request' }).click();
+  await expect(page.locator('#flow-badge')).toHaveText('MANAGER REVIEW');
   await page.getByLabel('Switch demo operator').selectOption('manager-1');
-  await page.getByRole('button', { name: 'Claim task' }).click();
+  // The shared stack's queue may hold earlier runs' work, so scope the claim to this request.
+  await page.locator('.task-row', { hasText: requestId }).getByRole('button', { name: 'Claim task' }).click();
   await page.getByRole('button', { name: 'Approve request' }).click();
 
   await expect.poll(async () => {
