@@ -27,7 +27,7 @@ spec:
       labels:
         app.kubernetes.io/name: mailpit
     spec:
-      serviceAccountName: faan-avsec
+      serviceAccountName: flowkit-demo
       containers:
         - name: mailpit
           image: axllent/mailpit:v1.25.0

@@ -25,7 +25,7 @@ spec:
       labels:
         app.kubernetes.io/name: postgres
     spec:
-      serviceAccountName: faan-avsec
+      serviceAccountName: flowkit-demo
       containers:
         - name: postgres
           image: postgres:16.4
@@ -34,17 +34,11 @@ spec:
               containerPort: 5432
           env:
             - name: POSTGRES_USER
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-credentials
-                  key: POSTGRES_USER
+              value: flowkit_demo
             - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: postgres-credentials
-                  key: POSTGRES_PASSWORD
+              value: flowkit_demo
             - name: POSTGRES_DB
-              value: db_prod
+              value: flowkit_demo
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
           volumeMounts:

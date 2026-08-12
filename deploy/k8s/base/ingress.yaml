@@ -4,84 +4,50 @@ metadata:
   name: ops-ingress-auth
 spec:
   basicAuth:
-    secret: ops-ingress-auth
+    secret: flowkit-demo-basic-auth
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: faan-avsec
+  name: flowkit-demo
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   ingressClassName: traefik
   tls:
-    - secretName: faan-avsec-k3s-tls
+    - secretName: flowkit-demo-k3s-tls
       hosts:
-        - k3s.faan-avsec.naakwu.app
-        - admin.k3s.faan-avsec.naakwu.app
-        - api.k3s.faan-avsec.naakwu.app
-        - temporal.k3s.faan-avsec.naakwu.app
-        - mail.k3s.faan-avsec.naakwu.app
+        - flowkit.k3s.naakwu.app
   rules:
-    - host: k3s.faan-avsec.naakwu.app
+    - host: flowkit.k3s.naakwu.app
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: public-web
-                port:
-                  name: http
-    - host: admin.k3s.faan-avsec.naakwu.app
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: internal-web
-                port:
-                  name: http
-    - host: api.k3s.faan-avsec.naakwu.app
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: backend
+                name: flowkit-api
                 port:
                   name: http
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: faan-avsec-ops
+  name: flowkit-demo-ops
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/router.middlewares: faan-avsec-dev-ops-ingress-auth@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: flowkit-demo-dev-ops-ingress-auth@kubernetescrd
 spec:
   ingressClassName: traefik
   tls:
-    - secretName: faan-avsec-k3s-tls
+    - secretName: flowkit-demo-k3s-tls
       hosts:
-        - temporal.k3s.faan-avsec.naakwu.app
-        - mail.k3s.faan-avsec.naakwu.app
+        - mail.flowkit.k3s.naakwu.app
+        - temporal.flowkit.k3s.naakwu.app
   rules:
-    - host: temporal.k3s.faan-avsec.naakwu.app
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: temporal-web
-                port:
-                  name: http
-    - host: mail.k3s.faan-avsec.naakwu.app
+    - host: mail.flowkit.k3s.naakwu.app
       http:
         paths:
           - path: /
@@ -89,5 +55,15 @@ spec:
             backend:
               service:
                 name: mailpit
+                port:
+                  name: http
+    - host: temporal.flowkit.k3s.naakwu.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: temporal-web
                 port:
                   name: http

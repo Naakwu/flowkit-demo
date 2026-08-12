@@ -5,17 +5,17 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/part-of: faan-avsec-odc
+      app.kubernetes.io/part-of: flowkit-demo
   policyTypes: [Ingress, Egress]
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-avsec-traffic
+  name: allow-flowkit-traffic
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/part-of: faan-avsec-odc
+      app.kubernetes.io/part-of: flowkit-demo
   policyTypes: [Ingress, Egress]
   ingress:
     - from:

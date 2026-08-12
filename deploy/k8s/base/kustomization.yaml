@@ -4,13 +4,12 @@ resources:
   - service-account.yaml
   - configmap.yaml
   - postgres.yaml
-  - postgres-bootstrap-job.yaml
-  - redis.yaml
   - mailpit.yaml
-  - ministack.yaml
-  - ministack-bucket-job.yaml
-  - backend.yaml
-  - web.yaml
+  - flowkit-api.yaml
+  - flowkit-worker.yaml
+  - flowkit-notify.yaml
+  - flowkit-migration.yaml
+  - flowkit-seed.yaml
   - ingress.yaml
   - certificates.yaml
   - network-policies.yaml
