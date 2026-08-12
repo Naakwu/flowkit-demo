@@ -1,0 +1,81 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: public-web
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: public-web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: public-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: public-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: public-web
+    spec:
+      serviceAccountName: faan-avsec
+      imagePullSecrets:
+        - name: registry-credentials
+      containers:
+        - name: public-web
+          image: docker.pigstycoders.com/faan-avsec-dev/public-web:dev
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: internal-web
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: internal-web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: internal-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: internal-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: internal-web
+    spec:
+      serviceAccountName: faan-avsec
+      imagePullSecrets:
+        - name: registry-credentials
+      containers:
+        - name: internal-web
+          image: docker.pigstycoders.com/faan-avsec-dev/internal-web:dev
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http

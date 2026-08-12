@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: faan-avsec-dev
+resources:
+  - ../../base
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/part-of: faan-avsec-odc
+      app.kubernetes.io/managed-by: tilt

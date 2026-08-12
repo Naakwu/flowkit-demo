@@ -1,0 +1,15 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: faan-avsec-k3s-tls
+spec:
+  secretName: faan-avsec-k3s-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - k3s.faan-avsec.naakwu.app
+    - admin.k3s.faan-avsec.naakwu.app
+    - api.k3s.faan-avsec.naakwu.app
+    - temporal.k3s.faan-avsec.naakwu.app
+    - mail.k3s.faan-avsec.naakwu.app
