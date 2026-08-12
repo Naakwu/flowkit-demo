@@ -9,19 +9,9 @@ tilt up
 The k3s path requires Tilt, Docker/BuildKit, `kubectl`, Helm 3, and access to
 the authenticated registry. The local Compose path does not require Helm.
 
-Use the hosted registry and k3s only when explicitly selecting the opt-in mode:
-
-```sh
-export KUBECONFIG=/Users/teopeurt/workspace/k3s/k3s.yaml
-export TILT_MODE=k3s
-# Set this only if the kubeconfig's context is not named "default".
-# export K3S_TILT_CONTEXT=your-k3s-context
-tilt up
-```
-
-The k3s mode builds the backend, Atlas migration image, and both Vite web apps
-with `docker_build`, pushes them through Tilt's registry integration, applies
-the Kustomize stack, and installs Temporal from the upstream Helm chart.
+The hosted registry and k3s are used only when explicitly selecting the opt-in
+mode `TILT_MODE=flowkit-k3s` documented below. The legacy `TILT_MODE=k3s`
+mode is retired and no longer selects a working workflow.
 
 ## FlowKit demo mode
 
@@ -63,21 +53,14 @@ Create the registry and runtime secrets using
 the ClusterIssuer after replacing `${ACME_EMAIL}`. Do not commit rendered
 secret files.
 
-The target hostname family is:
-
-- `https://k3s.faan-avsec.naakwu.app` — public web
-- `https://admin.k3s.faan-avsec.naakwu.app` — internal web
-- `https://api.k3s.faan-avsec.naakwu.app` — backend API
-- `https://temporal.k3s.faan-avsec.naakwu.app` — Temporal UI (basic auth)
-- `https://mail.k3s.faan-avsec.naakwu.app` — Mailpit UI (basic auth)
-
-Point DNS records for these hosts at the Traefik LoadBalancer address before
-expecting HTTP-01 certificates to become ready.
+Point DNS records for the FlowKit hosts (listed under "FlowKit demo mode") at
+the Traefik LoadBalancer address before expecting HTTP-01 certificates to
+become ready.
 
 ## Safe validation
 
 `deploy/scripts/validate-k3s-target.sh` is read-only and runs automatically as a
 Tilt preflight. It verifies the selected context, a Ready node, and all required
 secrets. It does not install charts, apply manifests, run migrations, or delete
-resources. The backend migration runs as a Deployment init container once the
-user starts the k3s Tilt workflow.
+resources. FlowKit database migrations are managed by the `flowkit-migration`
+k8s resource once the user starts the flowkit-k3s Tilt workflow.

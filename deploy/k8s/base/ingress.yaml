@@ -38,7 +38,8 @@ metadata:
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/router.middlewares: flowkit-demo-dev-ops-ingress-auth@kubernetescrd
+    # Namespace prefix updates to flowkit-demo-dev when the overlay namespace is renamed (Task 4).
+    traefik.ingress.kubernetes.io/router.middlewares: faan-avsec-dev-ops-ingress-auth@kubernetescrd
 spec:
   ingressClassName: traefik
   tls:
