@@ -5,8 +5,11 @@ on:
     paths:
       - "packages/flowkit-*/**"
       - "packages/flowkit-demo/**"
+      - "deploy/**"
       - "docs/flowkit/**"
       - "docs/superpowers/plans/2026-07-17-flowkit-demo.md"
+      - "docs/superpowers/plans/2026-08-12-flowkit-k3s-deployment.md"
+      - ".github/workflows/flowkit-demo.yml"
       - "bun.lock"
   push:
     branches: [main]
@@ -31,7 +34,34 @@ jobs:
   image:
     runs-on: ubuntu-latest
     needs: fast
+    env:
+      FLOWKIT_DEMO_REGISTRY_USERNAME: ${{ secrets.FLOWKIT_DEMO_REGISTRY_USERNAME }}
+      FLOWKIT_DEMO_REGISTRY_PASSWORD: ${{ secrets.FLOWKIT_DEMO_REGISTRY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - run: docker build -f packages/flowkit-demo/Dockerfile .
+      - name: Log in to registry
+        if: github.ref == 'refs/heads/main' && env.FLOWKIT_DEMO_REGISTRY_USERNAME != ''
+        uses: docker/login-action@v3
+        with:
+          registry: docker.pigstycoders.com
+          username: ${{ env.FLOWKIT_DEMO_REGISTRY_USERNAME }}
+          password: ${{ env.FLOWKIT_DEMO_REGISTRY_PASSWORD }}
+      - name: Publish image
+        if: github.ref == 'refs/heads/main' && env.FLOWKIT_DEMO_REGISTRY_USERNAME != ''
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/flowkit-demo/Dockerfile
+          push: true
+          tags: docker.pigstycoders.com/flowkit-demo-dev/flowkit-demo:${{ github.sha }}
+
+  deploy-manifests:
+    runs-on: ubuntu-latest
+    needs: fast
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - run: kubectl kustomize deploy/k8s/overlays/k3s-dev >/tmp/flowkit-k3s.yaml
+      - run: "! rg 'faan-avsec-backend|public-web|internal-web|ministack|redis' /tmp/flowkit-k3s.yaml"

@@ -1,34 +1,48 @@
 # k3s secrets
 
-Create these secrets in `faan-avsec-dev` before starting `TILT_MODE=k3s tilt up`.
-The commands below read values from environment variables so credentials remain
-outside the repository and shell history should be disabled or handled safely.
+Prefer the idempotent bootstrap helper:
 
 ```sh
-kubectl -n faan-avsec-dev create secret docker-registry registry-credentials \
+cp deploy/k8s/examples/secrets.env.example deploy/k8s/examples/secrets.env
+# edit deploy/k8s/examples/secrets.env with real values
+./deploy/scripts/bootstrap-flowkit-k3s.sh
+```
+
+It loads `deploy/k8s/examples/secrets.env` automatically when present and
+creates the namespace plus these secrets in `flowkit-demo-dev` before starting
+`TILT_MODE=flowkit-k3s tilt up`. The manual commands below are kept for
+debugging and recovery.
+
+When running through Tilt, `deploy/tilt/k3s.Tiltfile` applies
+`deploy/k8s/base/network-policies.yaml` as the ordered
+`flowkit-network-policies` resource before Temporal Helm starts. This avoids
+Temporal schema hook pods being blocked by default-deny networking during the
+initial install.
+
+cert-manager certificates are intentionally opt-in. Leave
+`FLOWKIT_K3S_CERT_MANAGER_ENABLED` unset/false unless the cluster has the
+cert-manager CRDs and `letsencrypt-prod` ClusterIssuer installed.
+To install both:
+
+```sh
+export ACME_EMAIL=ops@example.com
+./deploy/scripts/bootstrap-flowkit-cert-manager.sh
+```
+
+```sh
+kubectl -n flowkit-demo-dev create secret docker-registry flowkit-demo-registry \
   --docker-server=docker.pigstycoders.com \
   --docker-username="$REGISTRY_USERNAME" --docker-password="$REGISTRY_PASSWORD"
 
-kubectl -n faan-avsec-dev create secret generic postgres-credentials \
-  --from-literal=POSTGRES_USER=postgres --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
-
-kubectl -n faan-avsec-dev create secret generic temporal-db-credentials \
-  --from-literal=password="$TEMPORAL_DB_PASSWORD"
-
-kubectl -n faan-avsec-dev create secret generic redis-credentials \
-  --from-literal=REDIS_PASSWORD="$REDIS_PASSWORD"
-
-kubectl -n faan-avsec-dev create secret generic avsec-runtime \
+kubectl -n flowkit-demo-dev create secret generic flowkit-demo-runtime \
   --from-literal=DATABASE_URL="$DATABASE_URL" \
-  --from-literal=REDIS_PASSWORD="$REDIS_PASSWORD" \
   --from-literal=BETTER_AUTH_SECRET="$BETTER_AUTH_SECRET" \
-  --from-literal=AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-test}" \
-  --from-literal=AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-test}"
+  --from-literal=FLOWKIT_DEMO_MIGRATION_APPROVED="$FLOWKIT_DEMO_MIGRATION_APPROVED"
 
-htpasswd -nbB "$OPS_USER" "$OPS_PASSWORD" | kubectl -n faan-avsec-dev create secret generic ops-ingress-auth \
+htpasswd -nbB "$OPS_USER" "$OPS_PASSWORD" | kubectl -n flowkit-demo-dev create secret generic flowkit-demo-basic-auth \
   --from-file=users=/dev/stdin
 ```
 
-The namespace and cert-manager `ClusterIssuer` are bootstrap resources and are
-applied separately. Set `ACME_EMAIL` and substitute it into
-`deploy/k8s/bootstrap/cluster-issuer.yaml` before applying it.
+The namespace and optional cert-manager `ClusterIssuer` are bootstrap resources
+and are applied separately. Use
+`deploy/scripts/bootstrap-flowkit-cert-manager.sh` for the cert-manager path.

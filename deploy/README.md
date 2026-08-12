@@ -21,6 +21,8 @@ legacy AVSEC stack:
 ```sh
 export KUBECONFIG=/Users/teopeurt/workspace/k3s/k3s.yaml
 export TILT_MODE=flowkit-k3s
+export FLOWKIT_K3S_NAMESPACE=flowkit-demo-dev
+export FLOWKIT_K3S_REGISTRY=docker.pigstycoders.com/flowkit-demo-dev
 tilt up
 ```
 
@@ -35,23 +37,46 @@ target hostname family is:
 
 ## One-time cluster bootstrap
 
-Install cert-manager and create the namespace before starting Tilt. The
-namespace is intentionally outside the ordinary Tilt resource graph so `tilt
-down` does not remove PVCs or cluster-scoped certificate state.
+Create the namespace/secrets before starting Tilt. The namespace is
+intentionally outside the ordinary Tilt resource graph so `tilt down` does not
+remove PVCs.
+
+cert-manager is optional for the core FlowKit deploy. Install it only when you
+want Tilt to request the real Let's Encrypt certificate:
 
 ```sh
-helm repo add jetstack https://charts.jetstack.io
-helm repo update
-helm upgrade --install cert-manager jetstack/cert-manager \
-  --namespace cert-manager --create-namespace --set crds.enabled=true
-
-kubectl apply -f deploy/k8s/bootstrap/namespace.yaml
+export ACME_EMAIL=ops@example.com
+./deploy/scripts/bootstrap-flowkit-cert-manager.sh
 ```
 
-Create the registry and runtime secrets using
-[`deploy/k8s/examples/README.md`](k8s/examples/README.md), then render and apply
-the ClusterIssuer after replacing `${ACME_EMAIL}`. Do not commit rendered
-secret files.
+The script installs cert-manager from the official Jetstack OCI chart, enables
+its CRDs, waits for the controllers, renders `letsencrypt-prod` from
+`deploy/k8s/bootstrap/cluster-issuer.yaml`, and applies it. Override the chart
+version with `CERT_MANAGER_VERSION=v1.20.3` if needed. After it succeeds, start
+Tilt with `FLOWKIT_K3S_CERT_MANAGER_ENABLED=true` to apply
+`deploy/k8s/base/certificates.yaml`. Leave it unset/false when the cluster does
+not have cert-manager installed.
+
+Then create/update the FlowKit namespace and required secrets:
+
+```sh
+cp deploy/k8s/examples/secrets.env.example deploy/k8s/examples/secrets.env
+# edit deploy/k8s/examples/secrets.env with real values; do not commit it
+./deploy/scripts/bootstrap-flowkit-k3s.sh
+```
+
+The bootstrap script loads `deploy/k8s/examples/secrets.env` automatically when
+it exists. Override the path with `FLOWKIT_K3S_ENV_FILE=/path/to/file`, or export
+variables directly in your shell.
+
+If Tilt reports `namespaces "flowkit-demo-dev" not found`, stop Tilt, run the
+bootstrap script above, then start `TILT_MODE=flowkit-k3s tilt up` again.
+
+The script is idempotent and uses `kubectl apply`; rerunning it updates the
+secrets. It does not install charts, apply application manifests, run
+migrations, deploy workloads, or install cert-manager. Run
+`./deploy/scripts/bootstrap-flowkit-cert-manager.sh` before enabling
+`FLOWKIT_K3S_CERT_MANAGER_ENABLED=true`. Do not commit rendered secret files.
 
 Point DNS records for the FlowKit hosts (listed under "FlowKit demo mode") at
 the Traefik LoadBalancer address before expecting HTTP-01 certificates to
@@ -64,3 +89,52 @@ Tilt preflight. It verifies the selected context, a Ready node, and all required
 secrets. It does not install charts, apply manifests, run migrations, or delete
 resources. FlowKit database migrations are managed by the `flowkit-migration`
 k8s resource once the user starts the flowkit-k3s Tilt workflow.
+
+In Tilt, trigger `flowkit-migration` manually, then trigger `flowkit-seed`, then
+let `flowkit-api`, `flowkit-worker`, and `flowkit-notify` start. This preserves
+the repository rule that migrations run only after explicit approval. Both
+manual jobs include a `wait-for-postgres` init container, so a manual trigger
+will wait for `postgres:5432` instead of consuming the Job backoff limit while
+the StatefulSet is still starting.
+
+## Verification
+
+```sh
+kubectl -n flowkit-demo-dev get pods
+kubectl -n flowkit-demo-dev get jobs
+kubectl -n flowkit-demo-dev get ingress
+curl -fsS https://flowkit.k3s.naakwu.app/health/live
+curl -fsS https://flowkit.k3s.naakwu.app/health/ready
+```
+
+## Temporal schema hook failures
+
+If Temporal fails on a pod named like `temporal-schema-*` and a container such
+as `create-default-store`, inspect the schema hook logs before retrying:
+
+```sh
+kubectl -n flowkit-demo-dev logs pod/<temporal-schema-pod> -c create-default-store --previous
+kubectl -n flowkit-demo-dev describe pod <temporal-schema-pod>
+```
+
+The FlowKit NetworkPolicies include an explicit allow rule for Temporal Helm
+hook/schema pods to reach DNS and `postgres:5432`. Tilt applies them through
+the ordered `flowkit-network-policies` local resource before the Temporal Helm
+resource runs. They intentionally stay outside the kustomize overlay because
+the overlay adds selector labels for Tilt-managed workloads, while Temporal's
+Helm hook pods are chart-managed and must still match the policy.
+
+If an earlier failed Helm operation is stuck, clear the failed release before
+retriggering Temporal:
+
+```sh
+helm -n flowkit-demo-dev uninstall temporal --wait=false
+```
+
+If the schema hook still exits immediately after the policy is applied, check
+whether an old Postgres PVC was initialized with a different user/password or a
+role that cannot create databases:
+
+```sh
+kubectl -n flowkit-demo-dev exec statefulset/postgres -- sh -lc 'PGPASSWORD=flowkit_demo psql -h 127.0.0.1 -U flowkit_demo -d flowkit_demo -c "select current_user, rolsuper, rolcreatedb from pg_roles where rolname=current_user;"'
+```

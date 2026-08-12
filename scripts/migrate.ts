@@ -17,4 +17,4 @@ await withMigrationClient(async (client) => {
     await client.unsafe(await readFile(resolve(migrationDirectory, file), 'utf8'));
   }
 });
-process.stdout.write(`${migrationFiles.length} migration(s) applied to disposable database ${database}.\n`);
+process.stdout.write(`${migrationFiles.length} migration(s) applied to FlowKit database ${database}.\n`);

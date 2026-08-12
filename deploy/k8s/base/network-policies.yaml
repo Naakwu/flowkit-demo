@@ -1,3 +1,5 @@
+# NOTE: NetworkPolicy is only enforced when the cluster CNI supports it; stock
+# k3s/flannel does not. These policies take effect on CNIs such as Calico/Cilium.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -24,7 +26,7 @@ spec:
         - protocol: TCP
           port: 53
 ---
-# Traefik (kube-system DaemonSet) -> flowkit-api:3011, mailpit:8025, temporal-web:8080.
+# Traefik (kube-system Deployment on stock k3s) -> flowkit-api:3011, mailpit:8025, temporal-web:8080.
 # podSelector {} so the rule also admits the chart-managed temporal-web pods.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -51,7 +53,36 @@ spec:
         - protocol: TCP
           port: 8080
 ---
-# flowkit-api/worker/notify -> postgres:5432, temporal-frontend:7233.
+# cert-manager spins up ephemeral HTTP-01 challenge solver pods in this namespace,
+# listening on 8089, reached through Traefik. default-deny {} selects them, so the
+# ACME challenge traffic needs this explicit allow or the Certificate never becomes
+# Ready on a NetworkPolicy-enforcing CNI.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cert-manager-http01-solver
+spec:
+  podSelector:
+    matchExpressions:
+      - key: acme.cert-manager.io/http01-solver
+        operator: In
+        values: ["true"]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [traefik]
+      ports:
+        - protocol: TCP
+          port: 8089
+---
+# flowkit-api/worker -> postgres:5432, temporal-frontend:7233.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -61,7 +92,7 @@ spec:
     matchExpressions:
       - key: app.kubernetes.io/name
         operator: In
-        values: [flowkit-api, flowkit-worker, flowkit-notify]
+        values: [flowkit-api, flowkit-worker]
   policyTypes: [Egress]
   egress:
     - to:
@@ -76,7 +107,7 @@ spec:
     - to:
         - podSelector:
             matchExpressions:
-              - key: app.kubernetes.io/name
+              - key: app.kubernetes.io/instance
                 operator: In
                 values: [temporal]
       ports:
@@ -106,17 +137,19 @@ spec:
         - protocol: TCP
           port: 1025
 ---
-# flowkit-migration/seed -> postgres:5432.
+# flowkit-notify + migration/seed jobs -> postgres:5432.
+# (notify talks to the postgres inbox adapter and mailpit SMTP only; it has no
+# Temporal dependency, so it does not get 7233 egress.)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-jobs-db-egress
+  name: allow-db-egress
 spec:
   podSelector:
     matchExpressions:
       - key: app.kubernetes.io/name
         operator: In
-        values: [flowkit-migration, flowkit-seed]
+        values: [flowkit-migration, flowkit-seed, flowkit-notify]
   policyTypes: [Egress]
   egress:
     - to:
@@ -145,7 +178,7 @@ spec:
     - to:
         - podSelector:
             matchExpressions:
-              - key: app.kubernetes.io/name
+              - key: app.kubernetes.io/instance
                 operator: In
                 values: [temporal]
       ports:
@@ -160,7 +193,7 @@ metadata:
 spec:
   podSelector:
     matchExpressions:
-      - key: app.kubernetes.io/name
+      - key: app.kubernetes.io/instance
         operator: In
         values: [temporal]
   policyTypes: [Egress]
@@ -177,9 +210,45 @@ spec:
     - to:
         - podSelector:
             matchExpressions:
-              - key: app.kubernetes.io/name
+              - key: app.kubernetes.io/instance
                 operator: In
                 values: [temporal]
+---
+# Temporal Helm schema hook pods run before the Temporal server Deployments are
+# healthy. Keep this separate from allow-temporal-egress so the database/schema
+# jobs can create and migrate Temporal stores under default-deny networking.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-temporal-helm-hooks-egress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/instance
+        operator: In
+        values: [temporal]
+      - key: helm.sh/chart
+        operator: Exists
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [postgres]
+      ports:
+        - protocol: TCP
+          port: 5432
 ---
 # Ingress to Temporal pods: intra-Temporal (any port) and
 # flowkit-api/worker/temporal-namespace-job -> frontend:7233.
@@ -190,7 +259,7 @@ metadata:
 spec:
   podSelector:
     matchExpressions:
-      - key: app.kubernetes.io/name
+      - key: app.kubernetes.io/instance
         operator: In
         values: [temporal]
   policyTypes: [Ingress]
@@ -198,7 +267,7 @@ spec:
     - from:
         - podSelector:
             matchExpressions:
-              - key: app.kubernetes.io/name
+              - key: app.kubernetes.io/instance
                 operator: In
                 values: [temporal]
     - from:
@@ -236,7 +305,7 @@ spec:
     - from:
         - podSelector:
             matchExpressions:
-              - key: app.kubernetes.io/name
+              - key: app.kubernetes.io/instance
                 operator: In
                 values: [temporal]
       ports:

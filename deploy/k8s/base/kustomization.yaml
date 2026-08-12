@@ -12,5 +12,3 @@ resources:
   - flowkit-migration.yaml
   - flowkit-seed.yaml
   - ingress.yaml
-  - certificates.yaml
-  - network-policies.yaml

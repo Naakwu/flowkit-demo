@@ -1,10 +1,18 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Inject } from '@nestjs/common';
+
+import { liveHealth, readyHealth, type ReadinessProbe } from './health.responses';
+
+export const READINESS_PROBE = Symbol('READINESS_PROBE');
 
 @Controller('health')
 export class HealthController {
+  constructor(@Inject(READINESS_PROBE) private readonly readiness: ReadinessProbe) {}
+
   @Get('live')
-  live() { return { status: 'ok', service: 'flowkit-demo' }; }
+  live() { return liveHealth(); }
 
   @Get('ready')
-  ready() { return { status: 'ready', definition: 'leave-approval-demo@1' }; }
+  async ready() {
+    return readyHealth(this.readiness);
+  }
 }
