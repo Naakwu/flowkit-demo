@@ -1,4 +1,4 @@
-mple# k3s + Tilt deployment
+# k3s + Tilt deployment
 
 The original local Docker Compose workflow remains the default:
 
@@ -22,6 +22,26 @@ tilt up
 The k3s mode builds the backend, Atlas migration image, and both Vite web apps
 with `docker_build`, pushes them through Tilt's registry integration, applies
 the Kustomize stack, and installs Temporal from the upstream Helm chart.
+
+## FlowKit demo mode
+
+`TILT_MODE=flowkit-k3s` runs the FlowKit demo against k3s instead of the
+legacy AVSEC stack:
+
+```sh
+export KUBECONFIG=/Users/teopeurt/workspace/k3s/k3s.yaml
+export TILT_MODE=flowkit-k3s
+tilt up
+```
+
+It builds only the `flowkit-demo` image (from
+`packages/flowkit-demo/Dockerfile`), applies the Kustomize stack, and installs
+Temporal from the upstream Helm chart in the `flowkit-demo-dev` namespace. The
+target hostname family is:
+
+- `https://flowkit.k3s.naakwu.app` — FlowKit demo
+- `https://mail.flowkit.k3s.naakwu.app` — Mailpit UI (basic auth)
+- `https://temporal.flowkit.k3s.naakwu.app` — Temporal UI (basic auth)
 
 ## One-time cluster bootstrap
 
