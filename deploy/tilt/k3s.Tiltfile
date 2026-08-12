@@ -41,8 +41,8 @@ def configure_flowkit_k3s():
     k8s_resource('mailpit')
     k8s_resource('flowkit-migration', resource_deps=['postgres'], auto_init=False)
     k8s_resource('flowkit-seed', resource_deps=['flowkit-migration'], auto_init=False)
-    k8s_resource('flowkit-api', resource_deps=['flowkit-seed', 'temporal'])
-    k8s_resource('flowkit-worker', resource_deps=['flowkit-seed', 'temporal'])
+    k8s_resource('flowkit-api', resource_deps=['flowkit-seed', 'temporal', 'flowkit-temporal-namespace'])
+    k8s_resource('flowkit-worker', resource_deps=['flowkit-seed', 'temporal', 'flowkit-temporal-namespace'])
     k8s_resource('flowkit-notify', resource_deps=['flowkit-seed', 'mailpit'])
 
     local_resource(

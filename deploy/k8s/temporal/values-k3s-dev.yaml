@@ -3,7 +3,7 @@ fullnameOverride: temporal
 server:
   replicaCount: 1
   config:
-    numHistoryShards: 1
+    logLevel: debug,info
     persistence:
       defaultStore: default
       visibilityStore: visibility
@@ -11,29 +11,33 @@ server:
       datastores:
         default:
           sql:
+            createDatabase: true
             pluginName: postgres12
             driverName: postgres12
             databaseName: temporal
             connectAddr: postgres:5432
             connectProtocol: tcp
-            user: temporal
-            existingSecret: temporal-db-credentials
-            secretKey: password
-    namespaces:
-      create: true
-      namespace:
-        - name: faan-avsec-odc
-          retention: 7d
+            user: flowkit_demo
+            password: flowkit_demo
         visibility:
           sql:
+            createDatabase: true
             pluginName: postgres12
             driverName: postgres12
             databaseName: temporal_visibility
             connectAddr: postgres:5432
             connectProtocol: tcp
-            user: temporal
-            existingSecret: temporal-db-credentials
-            secretKey: password
+            user: flowkit_demo
+            password: flowkit_demo
+    namespaces:
+      create: true
+      namespace:
+        - name: flowkit-demo
+          retention: 7d
+    metrics:
+      prometheus:
+        timerType: histogram
+        listenAddress: "0.0.0.0:9090"
   frontend:
     replicaCount: 1
   history:
@@ -51,6 +55,3 @@ web:
 
 admintools:
   enabled: true
-
-elasticsearch:
-  enabled: false
