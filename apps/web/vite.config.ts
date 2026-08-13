@@ -9,7 +9,8 @@ export default defineConfig({
     },
   },
   server: {
-    port: 3012,
+    port: 5173,
+    strictPort: true,
     proxy: {
       '/api/workspace': {
         target: 'http://localhost:3011',

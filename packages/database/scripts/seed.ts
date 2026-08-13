@@ -2,6 +2,7 @@ import { hashPassword } from 'better-auth/crypto';
 
 import { loadConfig } from '@flowkit-demo/domain';
 import { withMigrationClient } from '../src/client';
+import { assertDisposableLocalDatabase } from '../../../scripts/lib/local-database-guard';
 
 const config = loadConfig();
 if (!config.FLOWKIT_DEMO_ALLOW_SEED || !['development', 'test'].includes(config.NODE_ENV)) {
@@ -79,6 +80,12 @@ await withMigrationClient(async (client) => {
   });
 });
 
-// Task 12 owns the disposable-database proof used before revealing reusable local credentials.
-// Until that proof is available this script deliberately prints neither emails nor passwords.
-process.stdout.write('Seeded two isolated demo organizations. Credential output is disabled pending the disposable database guard.\n');
+if (config.NODE_ENV === 'development') {
+  await assertDisposableLocalDatabase({ databaseUrl: config.DATABASE_URL });
+  process.stdout.write('Seeded two isolated demo organizations. Local development credentials:\n');
+  for (const identity of identities) {
+    process.stdout.write(`  ${identity.email} / ${identity.password}\n`);
+  }
+} else {
+  process.stdout.write('Seeded two isolated demo organizations.\n');
+}
