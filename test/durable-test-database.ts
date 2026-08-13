@@ -1,6 +1,6 @@
 import postgres, { type Sql } from 'postgres';
 
-import { durableTestsEnabled, loadConfig } from '../src/config';
+import { durableTestsEnabled, loadConfig } from '@flowkit-demo/domain';
 
 const leaveServiceTables = [
   'leave_requests', 'leave_transitions', 'flow_tasks', 'flow_task_events',

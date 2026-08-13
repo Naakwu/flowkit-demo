@@ -1,10 +1,10 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
-import { buildInitialState, type FlowState } from '@flowkit/core';
-import type { RecordTransitionInput } from '@flowkit/temporal';
+import { buildInitialState, type FlowState } from '@naakwu/flowkit-core';
+import type { RecordTransitionInput } from '@naakwu/flowkit-temporal';
 
-import { LeaveFlowRepository, scopeOperationId } from '../src/db/leave-flow.repository';
-import { publishedLeaveDefinition } from '../src/flow/flowkit-demo.consumer';
-import { leaveDefinition } from '../src/leave/leave.definition';
+import { LeaveFlowRepository, scopeOperationId } from '@flowkit-demo/database';
+import { publishedLeaveDefinition } from '../apps/api/src/flow/flowkit-demo.consumer';
+import { leaveDefinition } from '@flowkit-demo/domain';
 import { durableTestDatabase } from './durable-test-database';
 
 const sql = await durableTestDatabase('leave flow operation scope', [

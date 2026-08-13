@@ -1,15 +1,17 @@
 # Flowkit Demo
 
-Independent leave-approval reference consumer for the five public Flowkit packages. It does not
+Independent leave-approval reference consumer for the six public FlowKit packages. The repository
+is an application monorepo: transport, browser, workflow worker, delivery worker, replaceable
+domain vocabulary, persistence, and starter-owned UI each have an explicit boundary. It does not
 import FAAN code or sibling package source.
 
 ## Quickstart
 
 ```bash
 bun install
-bun run --cwd packages/flowkit-demo typecheck
-bun run --cwd packages/flowkit-demo test
-bun run --cwd packages/flowkit-demo dev:api
+bun run typecheck
+bun run test
+bun run dev:api
 curl http://localhost:3011/health/ready
 ```
 
@@ -24,13 +26,13 @@ fixtures only.
 ## Processes and scenarios
 
 ```bash
-bun run --cwd packages/flowkit-demo dev:worker
-bun run --cwd packages/flowkit-demo dev:notify
-bun run --cwd packages/flowkit-demo scenario -- short-auto-approved
+bun run dev:worker
+bun run dev:notify
+bun run scenario -- short-auto-approved
 ```
 
-The scenario runner exercises `@flowkit/core` transitions, `@flowkit/temporal` snapshots,
-`@flowkit/tasks` projections/claims, `@flowkit/notify` fan-out/dedupe, and `@flowkit/auth`
+The scenario runner exercises `@naakwu/flowkit-core` transitions, `@naakwu/flowkit-temporal` snapshots,
+`@naakwu/flowkit-tasks` projections/claims, `@naakwu/flowkit-notify` fan-out/dedupe, and `@naakwu/flowkit-auth`
 canonical principals.
 
 ## PostgreSQL and Docker
@@ -39,7 +41,7 @@ Compose uses only `flowkit_demo` resources and pinned images. The checked-in SQL
 The migrator refuses other database names and refuses to apply SQL without explicit approval:
 
 ```bash
-FLOWKIT_DEMO_MIGRATION_APPROVED=true bun run --cwd packages/flowkit-demo db:migrate
+FLOWKIT_DEMO_MIGRATION_APPROVED=true bun run db:migrate
 ```
 
 Do not run that command without approval. `stack:reset` only prints the guarded reset command.
@@ -50,7 +52,7 @@ If a default host port is occupied, override it without changing container-to-co
 FLOWKIT_DEMO_API_PORT=3012 FLOWKIT_DEMO_MAILPIT_HTTP_PORT=8026 FLOWKIT_DEMO_MAILPIT_SMTP_PORT=1026 \
 FLOWKIT_DEMO_MAILPIT_URL=http://localhost:8026 \
 FLOWKIT_DEMO_POSTGRES_PORT=5442 FLOWKIT_DEMO_TEMPORAL_PORT=7234 \
-bun run --cwd packages/flowkit-demo stack:up
+bun run stack:up
 ```
 
 ## Browser reference proof
@@ -60,7 +62,7 @@ migration, seeds a database, or starts Docker itself. After explicit approval to
 migration/seed services and after the stack is healthy, run:
 
 ```bash
-bun run --cwd packages/flowkit-demo test:browser
+bun run test:browser
 ```
 
 It proves the browser-visible employee → manager claim → approve/reject journey, final flow stage

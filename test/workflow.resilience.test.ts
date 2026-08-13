@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
-import { LeaveFlowRepository } from '../src/db/leave-flow.repository';
-import { LeaveService } from '../src/leave/leave.service';
+import { LeaveFlowRepository } from '@flowkit-demo/database';
+import { LeaveService } from '../apps/api/src/leave/leave.service';
 import { clearDurableLeaveServiceData, durableLeaveServiceDatabase } from './durable-test-database';
 
 const sql = await durableLeaveServiceDatabase('resilience boundaries');

@@ -1,12 +1,12 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
-import { createFlowkitTemporalRuntime } from '@flowkit/temporal';
+import { createFlowkitTemporalRuntime } from '@naakwu/flowkit-temporal';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { Worker } from '@temporalio/worker';
 
-import { LeaveFlowRepository } from '../src/db/leave-flow.repository';
-import { createFlowkitDemoConsumer, publishedLeaveDefinition } from '../src/flow/flowkit-demo.consumer';
-import { createLeaveActivities } from '../src/worker/activities';
-import { leaveWorkflowType } from '../src/worker/workflow-type';
+import { LeaveFlowRepository } from '@flowkit-demo/database';
+import { createFlowkitDemoConsumer, publishedLeaveDefinition } from '../apps/api/src/flow/flowkit-demo.consumer';
+import { createLeaveActivities } from '../apps/worker/src/activities';
+import { leaveWorkflowType } from '@flowkit-demo/domain';
 import { clearDurableLeaveServiceData, durableLeaveServiceDatabase } from './durable-test-database';
 
 const sql = await durableLeaveServiceDatabase('Flowkit demo consumer');
@@ -53,7 +53,7 @@ durableTests('Flowkit demo consumer', () => {
     const worker = await Worker.create({
       connection: environment.nativeConnection,
       taskQueue,
-      workflowsPath: new URL('../src/worker/workflows.ts', import.meta.url).pathname,
+      workflowsPath: new URL('../apps/worker/src/workflows.ts', import.meta.url).pathname,
       activities: createLeaveActivities({ repository }),
     });
     const runWorker = worker.run();

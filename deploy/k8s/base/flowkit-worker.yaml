@@ -20,7 +20,7 @@ spec:
         - name: flowkit-worker
           image: docker.pigstycoders.com/flowkit-demo-dev/flowkit-demo
           imagePullPolicy: Always
-          command: ["bun", "run", "src/worker/main.ts"]
+          command: ["bun", "run", "apps/worker/src/main.ts"]
           envFrom:
             - configMapRef:
                 name: flowkit-demo-config

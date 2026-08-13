@@ -34,7 +34,7 @@ spec:
         - name: flowkit-api
           image: docker.pigstycoders.com/flowkit-demo-dev/flowkit-demo
           imagePullPolicy: Always
-          command: ["bun", "run", "src/api/main.ts"]
+          command: ["bun", "run", "apps/api/src/main.ts"]
           ports:
             - name: http
               containerPort: 3011

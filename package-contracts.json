@@ -1,11 +1,11 @@
 {
-  "@flowkit/core": { "entrypoints": ["."], "symbols": ["defineFlow", "flowSchema", "lintFlow", "lintInterpreterFlow", "validateRegistryRefs", "buildInitialState", "transition"] },
-  "@flowkit/temporal": { "entrypoints": ["."], "symbols": ["publishDefinition", "verifyPublishedDefinition", "assertValidFlowkit", "canonicalizeJson", "hashCanonicalJson"] },
-  "@flowkit/tasks": { "entrypoints": ["."], "symbols": ["MemoryTaskStore", "planTaskProjection", "claimTask", "leaveApprovalDefinition", "humanTaskForStage"] },
-  "@flowkit/notify": { "entrypoints": ["."], "symbols": ["createTemplateRegistry", "template", "planNotification", "MemoryOutboxStore", "NotificationAdapterRegistry", "NotificationDeliveryRuntime", "testAdapter"] },
-  "@flowkit/auth": { "entrypoints": ["."], "symbols": ["parseAuthConfig", "verifiedProofs", "freezePrincipal"] },
-  "@flowkit/auth/roles": { "entrypoints": ["."], "symbols": ["defineRoleRegistry"] },
-  "@flowkit/auth/better-auth": { "entrypoints": ["."], "symbols": ["createAuthRuntime"] },
-  "@flowkit/auth/nest": { "entrypoints": ["."], "symbols": ["FlowkitAuthModule", "RequirePermissions"] },
-  "@flowkit/consumer": { "entrypoints": ["."], "symbols": ["createFlowkitConsumer"] }
+  "@naakwu/flowkit-core": { "entrypoints": ["."], "symbols": ["defineFlow", "flowSchema", "lintFlow", "lintInterpreterFlow", "validateRegistryRefs", "buildInitialState", "transition"] },
+  "@naakwu/flowkit-temporal": { "entrypoints": ["."], "symbols": ["publishDefinition", "verifyPublishedDefinition", "assertValidFlowkit", "canonicalizeJson", "hashCanonicalJson"] },
+  "@naakwu/flowkit-tasks": { "entrypoints": ["."], "symbols": ["MemoryTaskStore", "planTaskProjection", "claimTask", "leaveApprovalDefinition", "humanTaskForStage"] },
+  "@naakwu/flowkit-notify": { "entrypoints": ["."], "symbols": ["createTemplateRegistry", "template", "planNotification", "MemoryOutboxStore", "NotificationAdapterRegistry", "NotificationDeliveryRuntime", "testAdapter"] },
+  "@naakwu/flowkit-auth": { "entrypoints": ["."], "symbols": ["parseAuthConfig", "verifiedProofs", "freezePrincipal"] },
+  "@naakwu/flowkit-auth/roles": { "entrypoints": ["."], "symbols": ["defineRoleRegistry"] },
+  "@naakwu/flowkit-auth/better-auth": { "entrypoints": ["."], "symbols": ["createAuthRuntime"] },
+  "@naakwu/flowkit-auth/nest": { "entrypoints": ["."], "symbols": ["FlowkitAuthModule", "RequirePermissions"] },
+  "@naakwu/flowkit-consumer": { "entrypoints": ["."], "symbols": ["createFlowkitConsumer"] }
 }

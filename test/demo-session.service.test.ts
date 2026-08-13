@@ -2,8 +2,8 @@ import { UnauthorizedException } from '@nestjs/common';
 import { describe, expect, it } from 'bun:test';
 import type { Sql } from 'postgres';
 
-import { loadConfig } from '../src/config';
-import { DemoSessionService } from '../src/auth/demo-session.service';
+import { loadConfig } from '@flowkit-demo/domain';
+import { DemoSessionService } from '../apps/api/src/auth/demo-session.service';
 
 function fakeDatabase(user: { id: string; role_key: string }) {
   const sql = (async () => [user]) as unknown as Sql;

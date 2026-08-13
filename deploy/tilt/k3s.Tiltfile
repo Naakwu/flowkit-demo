@@ -27,7 +27,7 @@ def configure_flowkit_k3s():
     docker_build(
         registry + '/flowkit-demo',
         '.',
-        dockerfile='packages/flowkit-demo/Dockerfile',
+        dockerfile='deploy/docker/app.Dockerfile',
         platform=target_platform,
     )
 

@@ -1,18 +1,18 @@
 import { Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
-import type { AuthenticatedPrincipal } from '@flowkit/auth';
+import type { AuthenticatedPrincipal } from '@naakwu/flowkit-auth';
 
-import { DemoAuthController } from '../src/api/auth.module';
-import { FlowController } from '../src/api/flow.controller';
-import { NotificationsController } from '../src/api/notifications.controller';
-import { RuntimeController } from '../src/api/runtime.controller';
-import { TasksController } from '../src/api/tasks.controller';
-import { DemoSessionGuard } from '../src/auth/demo-session.guard';
-import { DemoSessionService } from '../src/auth/demo-session.service';
-import { principal } from '../src/auth/principal.adapters';
-import { RuntimeHealthRepository } from '../src/db/runtime-health.repository';
-import { FlowkitDemoConsumer } from '../src/flow/flowkit-demo.consumer';
+import { DemoAuthController } from '../apps/api/src/auth.module';
+import { FlowController } from '../apps/api/src/flow.controller';
+import { NotificationsController } from '../apps/api/src/notifications.controller';
+import { RuntimeController } from '../apps/api/src/runtime.controller';
+import { TasksController } from '../apps/api/src/tasks.controller';
+import { DemoSessionGuard } from '../apps/api/src/auth/demo-session.guard';
+import { DemoSessionService } from '../apps/api/src/auth/demo-session.service';
+import { principal } from '@flowkit-demo/domain';
+import { RuntimeHealthRepository } from '@flowkit-demo/database';
+import { FlowkitDemoConsumer } from '../apps/api/src/flow/flowkit-demo.consumer';
 
 const fiveDayLeave = {
   managerId: 'manager-1',

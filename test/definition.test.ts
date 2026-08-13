@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import { buildInitialState, lintFlow, lintInterpreterFlow, validateRegistryRefs } from '@flowkit/core';
-import { publishDefinition, verifyPublishedDefinition } from '@flowkit/temporal';
-import { leaveDefinition } from '../src/leave/leave.definition';
-import { leaveChannels, leaveGuards, leavePolicies, leaveRules, leaveSystemSteps, leaveTemplates } from '../src/leave/leave.registries';
+import { buildInitialState, lintFlow, lintInterpreterFlow, validateRegistryRefs } from '@naakwu/flowkit-core';
+import { publishDefinition, verifyPublishedDefinition } from '@naakwu/flowkit-temporal';
+import { leaveDefinition } from '@flowkit-demo/domain';
+import { leaveChannels, leaveGuards, leavePolicies, leaveRules, leaveSystemSteps, leaveTemplates } from '@flowkit-demo/domain';
 
 describe('leave approval definition', () => {
   it('is strict, lint-clean, and has a stable immutable snapshot', () => {

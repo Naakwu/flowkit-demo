@@ -20,7 +20,7 @@ spec:
         - name: flowkit-notify
           image: docker.pigstycoders.com/flowkit-demo-dev/flowkit-demo
           imagePullPolicy: Always
-          command: ["bun", "run", "src/notifications/delivery.worker.ts"]
+          command: ["bun", "run", "apps/notify-worker/src/delivery.worker.ts"]
           envFrom:
             - configMapRef:
                 name: flowkit-demo-config

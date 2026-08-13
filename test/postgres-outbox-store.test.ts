@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
-import type { NotificationDeliveryEnvelope } from '@flowkit/notify';
+import type { NotificationDeliveryEnvelope } from '@naakwu/flowkit-notify';
 
-import { PostgresOutboxStore, readDelivery } from '../src/db/postgres-outbox-store';
+import { PostgresOutboxStore, readDelivery } from '@flowkit-demo/database';
 import { durableTestDatabase } from './durable-test-database';
 
 const envelope: NotificationDeliveryEnvelope = {

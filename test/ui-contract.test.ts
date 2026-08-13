@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises';
 describe('Flowkit reference console contract', () => {
   it('contains the complete role-aware journey without runtime-engine terminology', async () => {
     const [html, app] = await Promise.all([
-      readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
-      readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
+      readFile(new URL('../apps/web/src/index.html', import.meta.url), 'utf8'),
+      readFile(new URL('../apps/web/src/app.js', import.meta.url), 'utf8'),
     ]);
 
     expect(html).toContain('id="operator-select"');

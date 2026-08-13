@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import type { RuleContext } from '@flowkit/temporal';
+import type { RuleContext } from '@naakwu/flowkit-temporal';
 
-import { leaveRules } from '../src/leave/leave.registries';
+import { leaveRules } from '@flowkit-demo/domain';
 
 describe('reference leave workflow automatic routing', () => {
   it('routes a short leave through the Flowkit rule without an HTTP system action', () => {

@@ -1,11 +1,11 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test';
-import type { NotificationDeliveryEnvelope } from '@flowkit/notify';
+import type { NotificationDeliveryEnvelope } from '@naakwu/flowkit-notify';
 
-import { RuntimeHealthRepository } from '../src/db/runtime-health.repository';
-import { PostgresOutboxStore, readDelivery } from '../src/db/postgres-outbox-store';
-import { MailpitSmtpAdapter, type SmtpMail, type SmtpTransport } from '../src/notifications/mailpit-smtp.adapter';
-import { createDeliveryAdapters, runDeliveryCycle } from '../src/notifications/delivery.worker';
-import { PostgresInboxAdapter } from '../src/notifications/postgres-inbox.adapter';
+import { RuntimeHealthRepository } from '@flowkit-demo/database';
+import { PostgresOutboxStore, readDelivery } from '@flowkit-demo/database';
+import { MailpitSmtpAdapter, type SmtpMail, type SmtpTransport } from '../apps/notify-worker/src/mailpit-smtp.adapter';
+import { createDeliveryAdapters, runDeliveryCycle } from '../apps/notify-worker/src/delivery.worker';
+import { PostgresInboxAdapter } from '@flowkit-demo/database';
 import { durableTestDatabase } from './durable-test-database';
 
 const approvedLeaveEnvelopes: NotificationDeliveryEnvelope[] = [

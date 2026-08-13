@@ -27,7 +27,7 @@ tilt up
 ```
 
 It builds only the `flowkit-demo` image (from
-`packages/flowkit-demo/Dockerfile`), applies the Kustomize stack, and installs
+`deploy/docker/app.Dockerfile`), applies the Kustomize stack, and installs
 Temporal from the upstream Helm chart in the `flowkit-demo-dev` namespace. The
 target hostname family is:
 
