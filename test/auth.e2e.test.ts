@@ -62,10 +62,11 @@ describe('BetterAuth HTTP boundary', () => {
   it('serves membership application roles through the mounted Nest BetterAuth controller', async () => {
     const now = new Date('2026-08-13T00:00:00.000Z');
     const sessionToken = 'nest-adapter-session';
+    const sessionExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1_000);
     const database = drizzle(async (sql) => {
       if (sql.includes('from "better_auth"."session"')) {
         return { rows: [[
-          'session-1', 'user-1', sessionToken, new Date('2027-08-14T00:00:00.000Z'),
+          'session-1', 'user-1', sessionToken, sessionExpiresAt,
           null, null, 'acme', now, now,
         ]] };
       }
