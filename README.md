@@ -15,13 +15,23 @@ bun run dev:api
 curl http://localhost:3011/health/ready
 ```
 
-The demo UI is served at `http://localhost:3011/`. It is a Flowkit reference console: sign in as
-an employee, create and submit a multi-day request, switch to its assigned manager to claim and
-approve or reject it, then inspect the immutable activity trail and durable delivery evidence.
-The console speaks only in Flowkit concepts; its runtime implementation is an internal adapter.
-`POST /auth/login` establishes a signed, development-only session for a canonical local principal.
-Seeded identities are employee-1, manager-1, manager-2, hr-1, and auditor-1. They are local/test
-fixtures only.
+The Vite UI runs at `http://localhost:3012/` and proxies its same-origin API routes to the Nest API
+at `http://localhost:3011/`. It is a neutral FlowKit workspace: sign in through BetterAuth, select
+an organization from the authenticated membership set, create and submit a multi-day request,
+sign in as its assigned manager to claim and approve or reject it, then inspect the activity trail
+and durable delivery evidence. Organization scope and application role always come from the
+server-validated session membership; request bodies cannot select an organization.
+
+For frontend-only development, start the existing API with the Vite public origin, then run:
+
+```bash
+BETTER_AUTH_URL=http://localhost:3012 bun run dev:api
+bun run --cwd apps/web dev
+```
+
+The starter UI is organized by domain feature under `apps/web/src/features`; reusable neutral
+tokens and accessible primitives live in `packages/ui`. The browser client sends same-origin
+credentials and a new idempotency key with every create, claim, and decision mutation.
 
 ## Processes and scenarios
 
@@ -65,15 +75,17 @@ migration/seed services and after the stack is healthy, run:
 bun run test:browser
 ```
 
-It proves the browser-visible employee → manager claim → approve/reject journey, final flow stage
-and activity timeline, an employee's durable inbox notification, current Flowkit runtime/delivery
-heartbeats, and an approval email visible through Mailpit. For non-default host ports, set
-`FLOWKIT_DEMO_URL` (for example `http://localhost:3012`) and
+It proves real BetterAuth email/password sessions, explicit organization selection, the
+browser-visible employee → manager claim → approve/reject journey, final flow stage and activity
+timeline, an employee's durable inbox notification, visible request failures, and an approval
+email visible through Mailpit. For non-default host ports, set
+`FLOWKIT_DEMO_URL` (the default is `http://localhost:3012`) and
 `FLOWKIT_DEMO_MAILPIT_URL` (for example `http://localhost:8026`) before running the suite.
 
-All three specs passed against the live Compose stack on July 30, 2026, and passed again
-back-to-back without resetting the database: every queue interaction is scoped to the request the
-spec created, so the proof tolerates work left by earlier runs.
+Task 11 compiled and discovered all four Playwright scenarios without starting a stack. Their live
+execution remains intentionally gated until an explicitly approved disposable migration and seed
+run is available. Every queue interaction is scoped to the request its spec creates, so the proof
+tolerates work left by earlier runs.
 
 The console polls a flow while Flowkit's rule advances it through `policy_evaluation` and
 `fulfillment`, because no operator action leaves those stages.

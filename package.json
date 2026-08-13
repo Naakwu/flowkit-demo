@@ -16,7 +16,7 @@
     "test:browser": "playwright test -c playwright.config.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json && bun run build:web",
-    "build:web": "rm -rf dist/apps/web && mkdir -p dist/apps/web && cp -R apps/web/src/. dist/apps/web/",
+    "build:web": "bun run --cwd apps/web build",
     "stack:up": "docker compose -p flowkit_demo -f deploy/compose/docker-compose.yml up --build --wait",
     "stack:down": "docker compose -p flowkit_demo -f deploy/compose/docker-compose.yml down",
     "stack:reset": "bun run scripts/reset-stack.ts"

@@ -58,6 +58,7 @@ services:
       FLOWKIT_DEMO_PERSISTENCE: "true"
       DATABASE_URL: postgresql://flowkit_demo:flowkit_demo@postgres:5432/flowkit_demo
       BETTER_AUTH_SECRET: flowkit-demo-compose-secret-change-me-32chars
+      BETTER_AUTH_URL: ${FLOWKIT_DEMO_WEB_URL:-http://localhost:3012}
       MAILPIT_URL: ${FLOWKIT_DEMO_MAILPIT_URL:-http://localhost:8025}
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_NAMESPACE: flowkit-demo
@@ -65,6 +66,12 @@ services:
     depends_on: { seed: { condition: service_completed_successfully }, temporal-namespace: { condition: service_completed_successfully } }
     ports: ["${FLOWKIT_DEMO_API_PORT:-3011}:3011"]
     command: ["bun", "run", "apps/api/src/main.ts"]
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web.Dockerfile
+    depends_on: { api: { condition: service_started } }
+    ports: ["${FLOWKIT_DEMO_WEB_PORT:-3012}:8080"]
   worker:
     build:
       context: ../..
