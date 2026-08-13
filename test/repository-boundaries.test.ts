@@ -97,9 +97,36 @@ describe('repository boundaries', () => {
     }
 
     expect(localLinks).toEqual([]);
-    expect(Object.fromEntries([...resolved].sort())).toEqual(
-      Object.fromEntries(expectedPackages.map((name) => [name, '0.2.0'])),
-    );
+    const resolvedEntries = Object.entries(Object.fromEntries([...resolved].sort()));
+    if (process.env.FLOWKIT_DEMO_CANDIDATE_TARBALLS === 'true') {
+      expect(resolvedEntries.map(([name]) => name)).toEqual([...expectedPackages].sort());
+      expect(resolvedEntries.every(([name, version]) => expectedPackages.includes(name) && version.startsWith('file:'))).toBe(true);
+    } else {
+      expect(Object.fromEntries(resolvedEntries)).toEqual(
+        Object.fromEntries(expectedPackages.map((name) => [name, '0.2.0'])),
+      );
+    }
+  });
+
+  it('declares dependencies used outside their owning workspace', async () => {
+    const rootManifest = JSON.parse(await readFile(join(repositoryRoot, 'package.json'), 'utf8')) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const uiManifest = JSON.parse(await readFile(join(repositoryRoot, 'packages/ui/package.json'), 'utf8')) as {
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(rootManifest.dependencies?.express).toBeDefined();
+    expect(rootManifest.dependencies?.['@temporalio/workflow']).toBeDefined();
+    expect(rootManifest.devDependencies?.['@types/express']).toBeDefined();
+    expect(rootManifest.devDependencies?.['better-call']).toBeDefined();
+    expect(uiManifest.devDependencies?.['@testing-library/user-event']).toBeDefined();
+  });
+
+  it('does not commit a local package registry into the lockfile', async () => {
+    const lockfile = await readFile(join(repositoryRoot, 'bun.lock'), 'utf8');
+    expect(lockfile).not.toContain('127.0.0.1:4873');
   });
 
   it('contains no copied FlowKit framework implementation', async () => {

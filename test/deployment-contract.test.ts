@@ -115,8 +115,12 @@ describe('deployment contract', () => {
     expect(dockerignore.split(/\r?\n/)).toContain('.npmrc');
     expect(dockerignore.split(/\r?\n/)).toContain('.env');
     expect(lockfile).not.toContain('http://127.0.0.1:4873');
-    for (const packageName of ['auth', 'consumer', 'core', 'notify', 'tasks', 'temporal']) {
-      expect(lockfile).toContain(`"@naakwu/flowkit-${packageName}": ["@naakwu/flowkit-${packageName}@0.2.0", ""`);
+    if (process.env.FLOWKIT_DEMO_CANDIDATE_TARBALLS === 'true') {
+      expect(lockfile).toContain('"overrides"');
+    } else {
+      for (const packageName of ['auth', 'consumer', 'core', 'notify', 'tasks', 'temporal']) {
+        expect(lockfile).toContain(`"@naakwu/flowkit-${packageName}": ["@naakwu/flowkit-${packageName}@0.2.0", ""`);
+      }
     }
   });
 
@@ -174,6 +178,12 @@ describe('deployment contract', () => {
     expect(compose.services.seed.depends_on?.migration?.condition).toBe('service_completed_successfully');
     expect(compose.services.api.depends_on?.seed?.condition).toBe('service_completed_successfully');
     expect(compose.services.worker.depends_on?.['temporal-namespace']?.condition).toBe('service_completed_successfully');
+  });
+
+  it('probes Temporal through its container address', async () => {
+    const compose = await text('docker-compose.yml');
+    expect(compose).toContain('"--address", "temporal:7233"');
+    expect(compose).not.toContain('"--address", "127.0.0.1:7233"');
   });
 
   it('keeps the local Tilt path safe and the k3s path explicitly ordered', async () => {
