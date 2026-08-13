@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 import { loadConfig, type DemoConfig } from '@flowkit-demo/domain';
+import { requireTenantScope, type TenantScope } from '@flowkit-demo/database';
 
 const require = createRequire(import.meta.url);
 
@@ -25,7 +26,8 @@ type NodemailerModule = {
 };
 
 const nodemailer = require('nodemailer') as NodemailerModule;
-const messageIdFor = (dedupeKey: string) => `<${createHash('sha256').update(dedupeKey).digest('hex')}@flowkit-demo.local>`;
+const deliveryKey = (scope: TenantScope, dedupeKey: string) => `${scope.organizationId}:${dedupeKey}`;
+const messageIdFor = (scope: TenantScope, dedupeKey: string) => `<${createHash('sha256').update(deliveryKey(scope, dedupeKey)).digest('hex')}@flowkit-demo.local>`;
 
 /**
  * Mailpit SMTP channel adapter.
@@ -36,7 +38,7 @@ const messageIdFor = (dedupeKey: string) => `<${createHash('sha256').update(dedu
  * neither survives a restart, so Flowkit must treat this channel as
  * non-idempotent.
  */
-export class MailpitSmtpAdapter implements NotificationChannelAdapter {
+export class MailpitSmtpAdapter {
   readonly channel = 'email';
   readonly idempotent = false;
   private readonly sent = new Map<string, string>();
@@ -53,9 +55,20 @@ export class MailpitSmtpAdapter implements NotificationChannelAdapter {
     this.from = options.from ?? config?.SMTP_FROM ?? 'notifications@flowkit-demo.test';
   }
 
-  async send(input: { envelope: NotificationDeliveryEnvelope; attemptId: string }) {
+  forOrganization(scope: TenantScope): NotificationChannelAdapter {
+    requireTenantScope(scope);
+    return {
+      channel: this.channel,
+      idempotent: this.idempotent,
+      send: (input) => this.send(scope, input),
+    };
+  }
+
+  async send(scope: TenantScope, input: { envelope: NotificationDeliveryEnvelope; attemptId: string }) {
+    requireTenantScope(scope);
     const { envelope } = input;
-    const prior = this.sent.get(envelope.dedupeKey);
+    const key = deliveryKey(scope, envelope.dedupeKey);
+    const prior = this.sent.get(key);
     if (prior) return { providerMessageId: prior };
 
     const result = await this.transport.sendMail({
@@ -63,11 +76,11 @@ export class MailpitSmtpAdapter implements NotificationChannelAdapter {
       to: envelope.recipient.address,
       subject: envelope.rendered.subject,
       text: envelope.rendered.body,
-      messageId: messageIdFor(envelope.dedupeKey),
+      messageId: messageIdFor(scope, envelope.dedupeKey),
       headers: { 'X-Flowkit-Dedupe-Key': envelope.dedupeKey },
     });
-    const providerMessageId = result.messageId ?? messageIdFor(envelope.dedupeKey);
-    this.sent.set(envelope.dedupeKey, providerMessageId);
+    const providerMessageId = result.messageId ?? messageIdFor(scope, envelope.dedupeKey);
+    this.sent.set(key, providerMessageId);
     return { providerMessageId };
   }
 

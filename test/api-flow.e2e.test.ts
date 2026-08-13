@@ -32,6 +32,7 @@ type RequestClient = {
 
 const identities = new Map<string, AuthenticatedPrincipal>([
   ['employee-1', principal('employee-1', 'employee')],
+  ['employee-2', principal('employee-2', 'employee')],
   ['manager-1', principal('manager-1', 'manager')],
   ['manager-2', principal('manager-2', 'manager')],
 ]);
@@ -256,7 +257,7 @@ describe('Flowkit API organization context and role paths', () => {
     expect(claimed).toMatchObject({ id: task.id, status: 'claimed', assigneeId: 'manager-1' });
     await manager.post(`/flows/${id}/actions`, { action: 'approve' });
     expect(await employee.get(`/flows/${id}`)).toMatchObject({ state: { stage: 'approved' } });
-    await expect(employee.post(`/flows/${id}/actions`, { action: 'approve' }, { 'x-demo-user': 'manager-1', 'x-demo-role': 'manager' })).rejects.toMatchObject({ status: 403 });
+    await expect(employee.post(`/flows/${id}/actions`, { action: 'approve' }, { 'x-demo-user': 'manager-1', 'x-demo-role': 'manager' })).rejects.toMatchObject({ status: 404 });
   });
 
   it('lists a claim action only for the assigned manager and still rejects an unassigned claim attempt', async () => {
@@ -270,12 +271,35 @@ describe('Flowkit API organization context and role paths', () => {
     const [task] = await manager1.get('/tasks') as any[];
     expect(task).toMatchObject({ subjectId: id, status: 'open', assigneeId: null });
 
-    await expect(manager2.post(`/tasks/${task.id}/claim`, { expectedRevision: task.revision })).rejects.toMatchObject({ status: 403 });
+    await expect(manager2.post(`/tasks/${task.id}/claim`, { expectedRevision: task.revision })).rejects.toMatchObject({ status: 404 });
 
     await expect(manager1.post(`/tasks/${task.id}/claim`, { expectedRevision: task.revision })).resolves.toMatchObject({
       status: 'claimed',
       assigneeId: 'manager-1',
     });
+  });
+
+  it('makes unauthorized and missing flow identifiers indistinguishable', async () => {
+    const employee1 = await login(baseUrl, 'employee-1');
+    const employee2 = await login(baseUrl, 'employee-2');
+    const { id } = await employee1.post('/flows', fiveDayLeave);
+
+    await expect(employee2.get(`/flows/${id}`)).rejects.toMatchObject({ status: 404 });
+    await expect(employee2.get('/flows/missing-flow')).rejects.toMatchObject({ status: 404 });
+    await expect(employee2.post(`/flows/${id}/actions`, { action: 'submit' })).rejects.toMatchObject({ status: 404 });
+    await expect(employee2.post('/flows/missing-flow/actions', { action: 'submit' })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('makes unauthorized and missing task identifiers indistinguishable', async () => {
+    const employee = await login(baseUrl, 'employee-1');
+    const manager1 = await login(baseUrl, 'manager-1');
+    const manager2 = await login(baseUrl, 'manager-2');
+    const { id } = await employee.post('/flows', fiveDayLeave);
+    await employee.post(`/flows/${id}/actions`, { action: 'submit' });
+    const [task] = await manager1.get('/tasks') as any[];
+
+    await expect(manager2.post(`/tasks/${task.id}/claim`, { expectedRevision: task.revision })).rejects.toMatchObject({ status: 404 });
+    await expect(manager2.post('/tasks/missing-task/claim', { expectedRevision: task.revision })).rejects.toMatchObject({ status: 404 });
   });
 
   it('rejects requests without recognized authentication credentials', async () => {

@@ -99,19 +99,19 @@ export class FlowController {
       || (current.role === 'manager' && request.manager_id === current.subjectId)
       || current.role === 'hr'
       || current.role === 'readonly_auditor';
-    if (!canView) throw new ForbiddenException('You cannot access this flow.');
+    if (!canView) throw new NotFoundException('Flow not found.');
     return request;
   }
 
   private async authorizeAction(action: string, request: { organization_id: string; id: string; flow_id: string; employee_id: string; manager_id: string }, current: AuthenticatedPrincipal) {
     if (action === 'submit' || action === 'withdraw') {
       if (current.role !== 'employee' || current.readOnly || request.employee_id !== current.subjectId) {
-        throw new ForbiddenException('Only the requesting employee can perform this action.');
+        throw new NotFoundException('Flow not found.');
       }
       return;
     }
     if (current.role !== 'manager' || current.readOnly || request.manager_id !== current.subjectId) {
-      throw new ForbiddenException('Only the assigned manager can perform this action.');
+      throw new NotFoundException('Flow not found.');
     }
     const task = await this.consumer.repository.tasks.find({ organizationId: request.organization_id }, {
       namespace: 'flowkit-demo', flowId: request.flow_id, subjectType: 'leave', subjectId: request.id,

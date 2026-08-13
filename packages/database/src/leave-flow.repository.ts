@@ -128,6 +128,17 @@ export class LeaveFlowRepository {
     return row ?? null;
   }
 
+  async getRequestByFlowId(scope: TenantScope, flowId: string): Promise<LeaveRequestRow | null> {
+    requireTenantScope(scope);
+    const [row] = await this.sql<LeaveRequestRow[]>`
+      SELECT organization_id, id, flow_id, employee_id, manager_id, start_date, end_date, business_days, reason, balance_days, stage, revision, definition_hash
+      FROM leave_requests
+      WHERE organization_id = ${scope.organizationId} AND flow_id = ${flowId}
+      LIMIT 1
+    `;
+    return row ?? null;
+  }
+
   async listActivities(scope: TenantScope, leaveId: string): Promise<LeaveActivity[]> {
     requireTenantScope(scope);
     const rows = await this.sql<Array<{

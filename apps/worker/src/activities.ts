@@ -6,7 +6,7 @@ import type {
 } from '@naakwu/flowkit-temporal';
 import { validateRegistryRefs } from '@naakwu/flowkit-core';
 
-import { resolveDemoActor } from '@flowkit-demo/domain';
+import { resolveDemoActor, tenantFlowId } from '@flowkit-demo/domain';
 import { LeaveFlowRepository, requireTenantScope, type TenantScope } from '@flowkit-demo/database';
 import { leaveDefinition } from '@flowkit-demo/domain';
 import { leaveChannels, leaveGuards, leavePolicies, leaveRules, leaveSystemSteps, leaveTemplates } from '@flowkit-demo/domain';
@@ -36,6 +36,11 @@ const outputForSystemStep = async (repository: LeaveFlowRepository, input: Execu
   }
 };
 
+function logicalWorkflowId(subject: { metadata?: Record<string, unknown> }, workflowId: string): string {
+  const scope = scopeFromSubject(subject);
+  return tenantFlowId(scope.organizationId, workflowId);
+}
+
 /** Activity adapters are the only worker-side bridge to durable demo projections. */
 export function createLeaveActivities(dependencies: LeaveActivityDependencies = {}): FlowkitActivityRegistry {
   const repository = dependencies.repository ?? new LeaveFlowRepository();
@@ -44,14 +49,15 @@ export function createLeaveActivities(dependencies: LeaveActivityDependencies = 
   const contexts = {
     async resolve(input: ResolveActionContextInput) {
       const scope = scopeFromSubject(input.subject);
-      const priorResult = await repository.findPriorResult(scope, input.workflowId, input.operationId);
+      const workflowId = logicalWorkflowId(input.subject, input.workflowId);
+      const priorResult = await repository.findPriorResult(scope, workflowId, input.operationId);
       if (priorResult) return { facts: {}, priorResult: { state: priorResult.state } };
 
       if (input.origin !== 'human') return { facts: {} };
       const actor = await actorResolver.resolve(input.command.actorId ?? '');
       const task = input.state.stage === 'manager_review'
         ? await repository.tasks.find(scope, {
-          namespace: 'flowkit-demo', flowId: input.workflowId, subjectType: 'leave', subjectId: input.subject.id,
+          namespace: 'flowkit-demo', flowId: workflowId, subjectType: 'leave', subjectId: input.subject.id,
           stage: 'manager_review', role: 'manager',
         })
         : null;
@@ -65,8 +71,14 @@ export function createLeaveActivities(dependencies: LeaveActivityDependencies = 
     },
   };
   const flows = {
-    recordTransition: (input: Parameters<FlowkitActivityRegistry['recordTransition']>[0]) => repository.recordTransition(scopeFromSubject(input.subject), input),
-    recordStageReady: (input: Parameters<FlowkitActivityRegistry['recordStageReady']>[0]) => repository.recordStageReady(scopeFromSubject(input.subject), input),
+    recordTransition: (input: Parameters<FlowkitActivityRegistry['recordTransition']>[0]) => repository.recordTransition(
+      scopeFromSubject(input.subject),
+      { ...input, workflowId: logicalWorkflowId(input.subject, input.workflowId) },
+    ),
+    recordStageReady: (input: Parameters<FlowkitActivityRegistry['recordStageReady']>[0]) => repository.recordStageReady(
+      scopeFromSubject(input.subject),
+      { ...input, workflowId: logicalWorkflowId(input.subject, input.workflowId) },
+    ),
   };
   const leaveSteps = { execute: (input: ExecuteSystemStepInput) => outputForSystemStep(repository, input) };
   const notifications = { dispatch: (input: Parameters<FlowkitActivityRegistry['dispatchNotification']>[0]) => repository.dispatchNotification(scopeFromSubject(input.subject), input) };

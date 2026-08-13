@@ -33,6 +33,18 @@ describe('tenant-scoped SQL', () => {
     expect(queries[0]!.values).toContain('leave-1');
   });
 
+  it('binds Temporal flow identifiers to an organization-owned leave row', async () => {
+    const { sql, queries } = recordingSql();
+    const repository = new LeaveFlowRepository({ sql });
+
+    await repository.getRequestByFlowId({ organizationId: 'acme-demo' }, 'shared-flow');
+
+    expect(queries).toHaveLength(1);
+    expect(queries[0]!.text).toContain('organization_id');
+    expect(queries[0]!.text).toContain('flow_id');
+    expect(queries[0]!.values).toEqual(['acme-demo', 'shared-flow']);
+  });
+
   it('filters task reads and inboxes in SQL before returning rows', async () => {
     const { sql, queries } = recordingSql();
     const tasks = new PostgresTaskStore(sql);

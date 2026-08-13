@@ -40,13 +40,29 @@ describe('Mailpit SMTP adapter', () => {
     const adapter = new MailpitSmtpAdapter({ transport });
     const input = { envelope: approvedLeaveEnvelopes[1]!, attemptId: 'attempt-1' };
 
-    const first = await adapter.send(input);
-    const second = await adapter.send({ ...input, attemptId: 'attempt-2' });
+    const scope = { organizationId: 'acme-demo' };
+    const first = await adapter.send(scope, input);
+    const second = await adapter.send(scope, { ...input, attemptId: 'attempt-2' });
 
     expect(adapter.idempotent).toBe(false);
     expect(transport.sent).toHaveLength(1);
     expect(first.providerMessageId).toBe(second.providerMessageId);
     expect(transport.sent[0]?.headers['X-Flowkit-Dedupe-Key']).toBe(approvedLeaveEnvelopes[1]?.dedupeKey);
+  });
+
+  it('delivers the same tenant-local dedupe key once for each organization', async () => {
+    const transport = new RecordingSmtpTransport();
+    const adapter = new MailpitSmtpAdapter({ transport });
+    const envelope = approvedLeaveEnvelopes[1]!;
+
+    await adapter.send({ organizationId: 'acme-demo' }, { envelope, attemptId: 'acme-attempt' });
+    await adapter.send({ organizationId: 'globex-demo' }, {
+      envelope: { ...envelope, recipient: { ...envelope.recipient, address: 'employee@globex.example.test' } },
+      attemptId: 'globex-attempt',
+    });
+
+    expect(transport.sent).toHaveLength(2);
+    expect(new Set(transport.sent.map((message) => message.messageId)).size).toBe(2);
   });
 });
 
@@ -67,7 +83,7 @@ durableTests('delivery worker', () => {
     const outbox = new PostgresOutboxStore(sql!);
     const inbox = new PostgresInboxAdapter(sql!);
     const smtp = new RecordingSmtpTransport();
-    const adapters = createDeliveryAdapters({ inbox: inbox.forOrganization(scope), smtp: new MailpitSmtpAdapter({ transport: smtp }) });
+    const adapters = createDeliveryAdapters({ inbox: inbox.forOrganization(scope), smtp: new MailpitSmtpAdapter({ transport: smtp }).forOrganization(scope) });
     const health = new RuntimeHealthRepository(sql!);
 
     await outbox.insert(scope, approvedLeaveEnvelopes);
@@ -94,7 +110,7 @@ durableTests('delivery worker', () => {
     const smtp = new RecordingSmtpTransport();
     const adapters = createDeliveryAdapters({
       inbox: new PostgresInboxAdapter(sql!).forOrganization(scope),
-      smtp: new MailpitSmtpAdapter({ transport: smtp }),
+      smtp: new MailpitSmtpAdapter({ transport: smtp }).forOrganization(scope),
     });
     const result = await runDeliveryCycle({
       scope, owner: 'replacement-worker', outbox, adapters, health: new RuntimeHealthRepository(sql!),

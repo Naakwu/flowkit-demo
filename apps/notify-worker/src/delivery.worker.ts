@@ -9,7 +9,7 @@ import type { TenantScope } from '@flowkit-demo/database';
 
 const retryPolicy = { maxAttempts: 3, initialDelayMs: 1_000, multiplier: 2, maxDelayMs: 10_000 };
 
-export function createDeliveryAdapters(options: { inbox: NotificationChannelAdapter; smtp: MailpitSmtpAdapter }): NotificationAdapterRegistry {
+export function createDeliveryAdapters(options: { inbox: NotificationChannelAdapter; smtp: NotificationChannelAdapter }): NotificationAdapterRegistry {
   const adapters = new NotificationAdapterRegistry();
   const registered: RegisteredAdapter[] = [
     { channel: options.inbox.channel, idempotent: options.inbox.idempotent, send: options.inbox.send.bind(options.inbox), enabled: true, retryPolicy },
@@ -88,7 +88,7 @@ if (import.meta.main) {
         scope,
         owner: `delivery-worker-${process.pid}-${organizationId}`,
         outbox,
-        adapters: createDeliveryAdapters({ inbox: inbox.forOrganization(scope), smtp }),
+        adapters: createDeliveryAdapters({ inbox: inbox.forOrganization(scope), smtp: smtp.forOrganization(scope) }),
         health,
         activePollMs: config.FLOWKIT_DEMO_NOTIFY_ACTIVE_POLL_MS,
         idlePollMs: config.FLOWKIT_DEMO_NOTIFY_IDLE_POLL_MS,

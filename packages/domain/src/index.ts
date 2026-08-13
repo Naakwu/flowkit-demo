@@ -8,3 +8,4 @@ export * from './leave/workflow-type';
 export * from './notifications/recipients';
 export * from './notifications/templates';
 export * from './roles';
+export * from './tenant-workflow-id';

@@ -9,7 +9,7 @@ import {
 } from '@naakwu/flowkit-consumer';
 import { publishDefinition } from '@naakwu/flowkit-temporal';
 
-import { resolveDemoActor } from '@flowkit-demo/domain';
+import { resolveDemoActor, tenantWorkflowId } from '@flowkit-demo/domain';
 import { LeaveFlowRepository } from '@flowkit-demo/database';
 import { leaveDefinition } from '@flowkit-demo/domain';
 import { leaveRequestSchema, type LeaveRequest } from '@flowkit-demo/domain';
@@ -50,9 +50,10 @@ export class FlowkitDemoConsumer {
   }
 
   private consumer(scope: TenantScope): FlowkitConsumer {
+    const runtime = this.runtimeFor(scope);
     return createFlowkitConsumer({
       definition: publishedLeaveDefinition,
-      runtime: this.runtime,
+      runtime,
       tasks: this.repository.tasks.forOrganization(scope),
       actorResolver: this.actorResolver,
       eligibility: {
@@ -67,7 +68,7 @@ export class FlowkitDemoConsumer {
       clock: { now: this.now },
       views: {
         read: (state) => state,
-        readByFlowId: async (flowId) => this.runtime.get({ flowId }),
+        readByFlowId: async (flowId) => runtime.get({ flowId }),
       },
     });
   }
@@ -95,12 +96,28 @@ export class FlowkitDemoConsumer {
     return { id: input.flowId, ...view };
   }
 
-  act(scope: TenantScope, input: Parameters<FlowkitConsumer['act']>[0]) {
+  async act(scope: TenantScope, input: Parameters<FlowkitConsumer['act']>[0]) {
+    await this.requireFlow(scope, input.flowId);
     return this.consumer(scope).act({ ...input, actor: { ...input.actor, organizationId: scope.organizationId } });
   }
 
-  getFlow(scope: TenantScope, flowId: string) {
+  async getFlow(scope: TenantScope, flowId: string) {
+    await this.requireFlow(scope, flowId);
     return this.consumer(scope).getFlow(flowId);
+  }
+
+  private async requireFlow(scope: TenantScope, flowId: string) {
+    if (!await this.repository.getRequestByFlowId(scope, flowId)) throw new Error('flow_not_found');
+  }
+
+  private runtimeFor(scope: TenantScope): FlowRuntime {
+    const qualify = (flowId: string) => tenantWorkflowId(scope.organizationId, flowId);
+    return {
+      start: (input) => this.runtime.start({ ...input, flowId: qualify(input.flowId) }),
+      act: (input) => this.runtime.act({ ...input, flowId: qualify(input.flowId) }),
+      get: (input) => this.runtime.get({ ...input, flowId: qualify(input.flowId) }),
+      health: () => this.runtime.health(),
+    };
   }
 }
 
