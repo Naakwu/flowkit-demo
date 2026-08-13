@@ -1,6 +1,31 @@
-import { describe, expect, it } from 'bun:test';
+import { createServer } from 'node:net';
 
-import { auth } from '../apps/api/src/auth/auth.config';
+import { Module } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { describe, expect, it } from 'bun:test';
+import { serializeSignedCookie } from 'better-call';
+import { drizzle } from 'drizzle-orm/pg-proxy';
+
+import { betterAuthSchema } from '@flowkit-demo/database';
+import { loadConfig } from '@flowkit-demo/domain';
+
+import { auth, createAuth } from '../apps/api/src/auth/auth.config';
+import {
+  BETTER_AUTH_INSTANCE,
+  BetterAuthController,
+} from '../apps/api/src/auth/auth.module';
+
+async function availablePort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Could not reserve a test port.');
+  await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  return address.port;
+}
 
 function post(path: string, body: unknown) {
   return auth.handler(new Request(`http://localhost:3011${path}`, {
@@ -32,5 +57,54 @@ describe('BetterAuth HTTP boundary', () => {
     });
 
     expect(response.status).toBe(401);
+  });
+
+  it('serves membership application roles through the mounted Nest BetterAuth controller', async () => {
+    const now = new Date('2026-08-13T00:00:00.000Z');
+    const sessionToken = 'nest-adapter-session';
+    const database = drizzle(async (sql) => {
+      if (sql.includes('from "better_auth"."session"')) {
+        return { rows: [[
+          'session-1', 'user-1', sessionToken, new Date('2027-08-14T00:00:00.000Z'),
+          null, null, 'acme', now, now,
+        ]] };
+      }
+      if (sql.includes('from "better_auth"."user"')) {
+        return { rows: [['user-1', 'User One', 'user@example.test', true, null, now, now]] };
+      }
+      if (sql.includes('from "better_auth"."member"')) {
+        return { rows: [['member-1', 'acme', 'user-1', 'member', 'employee', true, now]] };
+      }
+      return { rows: [] };
+    }, { schema: betterAuthSchema });
+    const testAuth = createAuth({ database });
+
+    class TestModule {}
+    Module({
+      controllers: [BetterAuthController],
+      providers: [{ provide: BETTER_AUTH_INSTANCE, useValue: testAuth }],
+    })(TestModule);
+    const app = await NestFactory.create(TestModule, { logger: false });
+    const port = await availablePort();
+
+    try {
+      await app.listen(port, '127.0.0.1');
+      const config = loadConfig();
+      const cookie = await serializeSignedCookie(
+        'flowkit-demo.session_token',
+        sessionToken,
+        config.BETTER_AUTH_SECRET,
+      );
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/auth/organization/get-active-member`,
+        { headers: { cookie } },
+      );
+      const member = await response.json() as { applicationRole?: string };
+
+      expect(response.status).toBe(200);
+      expect(member.applicationRole).toBe('employee');
+    } finally {
+      await app.close();
+    }
   });
 });

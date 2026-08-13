@@ -1,5 +1,5 @@
 import { betterAuth } from 'better-auth';
-import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { drizzleAdapter, type DB } from 'better-auth/adapters/drizzle';
 import { organization } from 'better-auth/plugins';
 import { drizzle } from 'drizzle-orm/postgres-js';
 
@@ -9,10 +9,12 @@ import {
 } from '@flowkit-demo/database';
 import { loadConfig } from '@flowkit-demo/domain';
 
-export function createAuth() {
+export function createAuth(overrides: { database?: DB } = {}) {
   const config = loadConfig();
-  const sql = createDemoDatabaseClient(config.DATABASE_URL);
-  const database = drizzle(sql, { schema: betterAuthSchema });
+  const database = overrides.database ?? drizzle(
+    createDemoDatabaseClient(config.DATABASE_URL),
+    { schema: betterAuthSchema },
+  );
 
   return betterAuth({
     appName: 'FlowKit Demo',
@@ -37,7 +39,6 @@ export function createAuth() {
                 required: true,
                 input: false,
                 defaultValue: 'employee',
-                fieldName: 'application_role',
               },
               enabled: {
                 type: 'boolean',
