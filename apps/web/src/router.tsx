@@ -63,7 +63,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, loader: dashboardLoader, element: <Dashboard /> },
       { path: 'requests/new', element: <NewRequestRoute /> },
-      { path: 'requests/:requestId', loader: requestLoader, element: <RequestRoute /> },
+      { path: 'requests/:requestId', loader: requestDetailLoader, element: <RequestRoute /> },
       { path: 'tasks', loader: tasksLoader, element: <TasksRoute /> },
       { path: 'activity/:requestId', loader: requestLoader, element: <ActivityRoute /> },
       { path: 'notifications', loader: notificationsLoader, element: <NotificationsRoute /> },
@@ -107,6 +107,12 @@ async function dashboardLoader() {
 async function requestLoader({ params }: LoaderFunctionArgs) {
   if (!params.requestId) throw new Response('Request identifier is required.', { status: 400 });
   return api.getRequest(params.requestId);
+}
+
+async function requestDetailLoader({ params }: LoaderFunctionArgs) {
+  if (!params.requestId) throw new Response('Request identifier is required.', { status: 400 });
+  const [flow, tasks] = await Promise.all([api.getRequest(params.requestId), api.listTasks()]);
+  return { flow, tasks };
 }
 
 async function tasksLoader() {
@@ -208,17 +214,26 @@ function NewRequestRoute() {
 }
 
 function RequestRoute() {
-  const initial = useLoaderData() as FlowRecord;
-  const [flow, setFlow] = useState(initial);
+  const initial = useLoaderData() as { flow: FlowRecord; tasks: TaskRecord[] };
+  const { member, session } = useRouteLoaderData('protected') as ProtectedContext;
+  const [flow, setFlow] = useState(initial.flow);
 
-  useEffect(() => setFlow(initial), [initial]);
+  useEffect(() => setFlow(initial.flow), [initial.flow]);
 
   async function runAction(action: string, comment?: string) {
     await api.transitionRequest(flow.id, action, comment);
     setFlow(await pollUntilOwnedStage(flow.id));
   }
 
-  return <RequestSummary flow={flow} onAction={runAction} />;
+  return (
+    <RequestSummary
+      flow={flow}
+      currentRole={member.applicationRole}
+      currentUserId={session.user.id}
+      reviewTask={initial.tasks.find((task) => task.subjectId === flow.id && task.stage === 'manager_review')}
+      onAction={runAction}
+    />
+  );
 }
 
 function TasksRoute() {

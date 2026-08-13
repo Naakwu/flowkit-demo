@@ -87,7 +87,7 @@ describe('authenticated FlowKit feature modules', () => {
   });
 
   it('shows request state and only the supplied server-authorized actions', () => {
-    const view = render(<RequestSummary flow={flow} onAction={async () => undefined} />);
+    const view = render(<RequestSummary flow={flow} currentRole="manager" currentUserId="acme-demo-manager" reviewTask={{ id: 'task-1', subjectId: flow.id, stage: 'manager_review', role: 'manager', status: 'claimed', revision: 1, assigneeId: 'acme-demo-manager' }} onAction={async () => undefined} />);
 
     expect(view.getByRole('heading', { name: 'leave-42' }).isConnected).toBe(true);
     expect(view.getByTestId('request-stage').textContent).toBe('Manager review');
@@ -95,6 +95,27 @@ describe('authenticated FlowKit feature modules', () => {
     expect(view.getByRole('button', { name: 'Reject request' }).isConnected).toBe(true);
     expect(view.queryByRole('button', { name: 'Submit request' })).toBeNull();
   });
+
+  it('hides manager decisions while the known review task is unclaimed', () => {
+    const view = render(<RequestSummary flow={flow} currentRole="manager" currentUserId="acme-demo-manager" reviewTask={{ id: 'task-1', subjectId: flow.id, stage: 'manager_review', role: 'manager', status: 'open', revision: 0 }} onAction={async () => undefined} />);
+
+    expect(view.queryByRole('button', { name: 'Approve request' }) === null).toBe(true);
+    expect(view.queryByRole('button', { name: 'Reject request' }) === null).toBe(true);
+    expect(view.getByText('Claim the review task before recording a decision.').isConnected).toBe(true);
+  });
+
+  function expectTerminalRail(stage: 'rejected' | 'withdrawn') {
+    const terminal = { ...flow, state: { stage }, nextActions: [] };
+    const view = render(<RequestSummary flow={terminal} currentRole="employee" currentUserId={flow.employee_id} onAction={async () => undefined} />);
+    const rail = view.getByRole('list', { name: 'Workflow position' });
+
+    expect(rail.textContent).toContain(`${stage === 'rejected' ? 'Rejected' : 'Withdrawn'}Current stage`);
+    expect(rail.textContent).not.toContain('ApprovedPending');
+  }
+
+  it('ends the workflow rail at the rejected terminal state', () => expectTerminalRail('rejected'));
+
+  it('ends the workflow rail at the withdrawn terminal state', () => expectTerminalRail('withdrawn'));
 
   it('lets a manager claim an open task and exposes its request link', async () => {
     const task: TaskRecord = { id: 'task-1', subjectId: flow.id, stage: 'manager_review', role: 'manager', status: 'open', revision: 0 };
@@ -120,7 +141,7 @@ describe('authenticated FlowKit feature modules', () => {
   });
 
   it('contains no inherited FAAN product language', () => {
-    const view = render(<><LoginPage onSignIn={async () => undefined} /><RequestSummary flow={flow} onAction={async () => undefined} /></>);
+    const view = render(<><LoginPage onSignIn={async () => undefined} /><RequestSummary flow={flow} currentRole="manager" currentUserId="acme-demo-manager" onAction={async () => undefined} /></>);
 
     expect(view.container.textContent).not.toMatch(/FAAN|AVSEC|aviation security/i);
   });

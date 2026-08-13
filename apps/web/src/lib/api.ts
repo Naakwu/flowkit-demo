@@ -77,6 +77,7 @@ export class ApiError extends Error {
 }
 
 type IdFactory = () => string;
+const workspaceApi = '/api/workspace';
 
 export class ApiClient {
   constructor(private readonly newIdempotencyKey: IdFactory = () => crypto.randomUUID()) {}
@@ -86,11 +87,11 @@ export class ApiClient {
   }
 
   signIn(email: string, password: string) {
-    return this.request<SessionPayload>('/api/auth/sign-in/email', { method: 'POST', body: { email, password } });
+    return this.mutation<SessionPayload>('/api/auth/sign-in/email', { email, password });
   }
 
   signOut() {
-    return this.request<{ success: boolean }>('/api/auth/sign-out', { method: 'POST' });
+    return this.mutation<{ success: boolean }>('/api/auth/sign-out');
   }
 
   listOrganizations() {
@@ -98,7 +99,7 @@ export class ApiClient {
   }
 
   setActiveOrganization(organizationId: string) {
-    return this.request<Organization | null>('/api/auth/organization/set-active', { method: 'POST', body: { organizationId } });
+    return this.mutation<Organization | null>('/api/auth/organization/set-active', { organizationId });
   }
 
   getActiveMember() {
@@ -106,34 +107,34 @@ export class ApiClient {
   }
 
   createRequest(input: CreateRequestInput) {
-    return this.mutation<FlowRecord>('/flows', input);
+    return this.mutation<FlowRecord>(`${workspaceApi}/flows`, input);
   }
 
   getRequest(id: string) {
-    return this.request<FlowRecord>(`/flows/${encodeURIComponent(id)}`);
+    return this.request<FlowRecord>(`${workspaceApi}/flows/${encodeURIComponent(id)}`);
   }
 
   transitionRequest(id: string, action: string, comment?: string) {
-    return this.mutation<unknown>(`/flows/${encodeURIComponent(id)}/actions`, { action, ...(comment ? { comment } : {}) });
+    return this.mutation<unknown>(`${workspaceApi}/flows/${encodeURIComponent(id)}/actions`, { action, ...(comment ? { comment } : {}) });
   }
 
   listTasks() {
-    return this.request<TaskRecord[]>('/tasks');
+    return this.request<TaskRecord[]>(`${workspaceApi}/tasks`);
   }
 
   claimTask(id: string, expectedRevision: number) {
-    return this.mutation<TaskRecord>(`/tasks/${encodeURIComponent(id)}/claim`, { expectedRevision });
+    return this.mutation<TaskRecord>(`${workspaceApi}/tasks/${encodeURIComponent(id)}/claim`, { expectedRevision });
   }
 
   listNotifications() {
-    return this.request<NotificationPayload>('/notifications');
+    return this.request<NotificationPayload>(`${workspaceApi}/notifications`);
   }
 
   getRuntime() {
-    return this.request<RuntimeStatus>('/runtime');
+    return this.request<RuntimeStatus>(`${workspaceApi}/runtime`);
   }
 
-  private mutation<T>(path: string, body: unknown) {
+  private mutation<T>(path: string, body?: unknown) {
     return this.request<T>(path, {
       method: 'POST',
       body,

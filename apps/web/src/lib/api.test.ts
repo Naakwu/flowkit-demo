@@ -21,6 +21,37 @@ describe('same-origin API client', () => {
     expect(fetchSpy.mock.calls[0]?.[1]).toMatchObject({ credentials: 'same-origin' });
   });
 
+  it('keeps JSON resources under an API namespace distinct from browser page routes', async () => {
+    const fetchSpy = mock(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json([]));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const client = new ApiClient();
+
+    await client.listTasks();
+    await client.listNotifications();
+
+    expect(fetchSpy.mock.calls.map(([path]) => path)).toEqual([
+      '/api/workspace/tasks',
+      '/api/workspace/notifications',
+    ]);
+  });
+
+  it('adds idempotency keys to every state-changing BetterAuth POST', async () => {
+    const keys = ['sign-in-key', 'sign-out-key', 'organization-key'];
+    const fetchSpy = mock(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ success: true }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+    const client = new ApiClient(() => keys.shift() ?? 'unexpected');
+
+    await client.signIn('employee@example.test', 'password');
+    await client.signOut();
+    await client.setActiveOrganization('acme-demo');
+
+    expect(fetchSpy.mock.calls.map(([, options]) => new Headers(options?.headers).get('idempotency-key'))).toEqual([
+      'sign-in-key',
+      'sign-out-key',
+      'organization-key',
+    ]);
+  });
+
   it('adds a fresh idempotency key and never sends organization input for request mutations', async () => {
     const fetchSpy = mock(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ id: 'leave-1' }));
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
@@ -36,6 +67,7 @@ describe('same-origin API client', () => {
     });
 
     const options = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe('/api/workspace/flows');
     expect(new Headers(options.headers).get('idempotency-key')).toBe('operation-123');
     expect(JSON.parse(String(options.body))).toEqual({
       startDate: '2026-08-17',
@@ -59,6 +91,10 @@ describe('same-origin API client', () => {
 
     const first = fetchSpy.mock.calls[0]?.[1] as RequestInit;
     const second = fetchSpy.mock.calls[1]?.[1] as RequestInit;
+    expect(fetchSpy.mock.calls.map(([path]) => path)).toEqual([
+      '/api/workspace/tasks/task-1/claim',
+      '/api/workspace/flows/leave-1/actions',
+    ]);
     expect(new Headers(first.headers).get('idempotency-key')).toBe('claim-key');
     expect(JSON.parse(String(first.body))).toEqual({ expectedRevision: 3 });
     expect(new Headers(second.headers).get('idempotency-key')).toBe('decision-key');

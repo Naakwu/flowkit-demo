@@ -34,7 +34,7 @@ code { font-family: var(--fk-font-code); font-size: 0.75rem; }
 .organization-option strong, .organization-option code { display: block; }
 .organization-option code { color: var(--fk-text-muted); margin-top: 5px; }
 
-.app-shell { display: grid; grid-template-columns: 244px minmax(0, 1fr); min-height: 100vh; }
+.app-shell { display: grid; grid-template-columns: 256px minmax(0, 1fr); min-height: 100vh; }
 .sidebar { background: #0a1929; color: #f1f5f9; display: flex; flex-direction: column; min-height: 100vh; padding: 24px 18px; }
 .wordmark--sidebar { margin: 0 8px 48px; }
 .sidebar > .eyebrow { color: #64748b; margin-left: 10px; }
@@ -52,7 +52,7 @@ code { font-family: var(--fk-font-code); font-size: 0.75rem; }
 .topbar small, .topbar span { color: var(--fk-text-muted); font-size: 0.75rem; }
 .topbar span { border-left: 1px solid var(--fk-border); padding-left: 9px; text-transform: capitalize; }
 .topbar-actions { align-items: center; display: flex; gap: 12px; }
-.route-loading { left: 244px; position: fixed; right: 0; top: 68px; z-index: 10; }
+.route-loading { left: 256px; position: fixed; right: 0; top: 68px; z-index: 10; }
 .route-loading .fk-loading { background: rgb(255 255 255 / 94%); border-bottom: 1px solid var(--fk-border); padding: 10px 48px; }
 .main-content { margin: 0 auto; max-width: 1280px; padding: clamp(24px, 4vw, 48px); }
 .page-stack { display: grid; gap: 24px; }

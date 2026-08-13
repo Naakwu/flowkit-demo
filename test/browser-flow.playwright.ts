@@ -72,9 +72,10 @@ test('the assigned manager can reject a claimed multi-day request', async ({ pag
   await reviewLeave(page, 'reject');
 });
 
-test('login, organization, request, task, activity, and notification routes expose loading and error boundaries', async ({ page }) => {
-  await page.route('**/notifications', (route) => route.fulfill({ status: 503, body: JSON.stringify({ message: 'Delivery history is temporarily unavailable.' }) }));
+test('direct notification navigation stays an SPA document while its API failure is visible', async ({ page }) => {
+  await page.route('**/api/workspace/notifications', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'Delivery history is temporarily unavailable.' }) }));
   await signIn(page, 'employee');
   await page.goto(`${demoUrl}/notifications`);
+  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
   await expect(page.getByRole('alert')).toContainText('Delivery history is temporarily unavailable.');
 });

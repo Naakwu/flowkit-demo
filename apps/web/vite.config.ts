@@ -11,11 +11,11 @@ export default defineConfig({
   server: {
     port: 3012,
     proxy: {
+      '/api/workspace': {
+        target: 'http://localhost:3011',
+        rewrite: (path) => path.replace(/^\/api\/workspace/, ''),
+      },
       '/api': 'http://localhost:3011',
-      '/flows': 'http://localhost:3011',
-      '/tasks': 'http://localhost:3011',
-      '/notifications': 'http://localhost:3011',
-      '/runtime': 'http://localhost:3011',
     },
   },
   build: {

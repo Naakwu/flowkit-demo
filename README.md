@@ -31,7 +31,10 @@ bun run --cwd apps/web dev
 
 The starter UI is organized by domain feature under `apps/web/src/features`; reusable neutral
 tokens and accessible primitives live in `packages/ui`. The browser client sends same-origin
-credentials and a new idempotency key with every create, claim, and decision mutation.
+credentials and a new idempotency key with every POST mutation, including BetterAuth session and
+organization changes. Workspace JSON routes use the public `/api/workspace/*` namespace, which
+the development and production proxies rewrite to the Nest resource routes; page refreshes at
+`/tasks` and `/notifications` therefore remain unambiguous SPA document requests.
 
 ## Processes and scenarios
 
