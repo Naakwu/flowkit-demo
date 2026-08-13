@@ -31,6 +31,7 @@ COPY --from=build /app/package.json /app/package.json
 COPY --from=build /app/bunfig.toml /app/bunfig.toml
 COPY --from=build /app/apps /app/apps
 COPY --from=build /app/packages /app/packages
+COPY --from=build /app/scripts /app/scripts
 COPY --from=build /app/dist /app/dist
 
 USER bun

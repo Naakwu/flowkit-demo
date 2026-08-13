@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { readFile, readdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 
 const root = resolve(import.meta.dir, '..');
 
@@ -45,6 +45,58 @@ const workloadCommands = {
   seed: ['bun', 'run', 'db:seed'],
 } as const;
 
+async function resolveLocalImport(
+  importer: string,
+  specifier: string,
+  workspaceExports: ReadonlyMap<string, string>,
+): Promise<string | undefined> {
+  let unresolved: string;
+  if (specifier.startsWith('.')) {
+    unresolved = resolve(dirname(importer), specifier);
+  } else {
+    const workspaceExport = workspaceExports.get(specifier);
+    if (workspaceExport === undefined) {
+      if (specifier.startsWith('@flowkit-demo/')) {
+        throw new Error(`Unresolved workspace package import ${specifier} from ${relative(root, importer)}`);
+      }
+      return undefined;
+    }
+    unresolved = resolve(root, workspaceExport);
+  }
+
+  for (const candidate of [unresolved, `${unresolved}.ts`, `${unresolved}.tsx`, resolve(unresolved, 'index.ts')]) {
+    if (await Bun.file(candidate).exists()) return candidate;
+  }
+  throw new Error(`Unable to resolve local import ${specifier} from ${relative(root, importer)}`);
+}
+
+async function runtimeDependencyClosure(entries: readonly string[]): Promise<Set<string>> {
+  const workspaceExports = new Map<string, string>();
+  for (const packageJsonPath of (await filesBelow('packages')).filter((path) => path.endsWith('/package.json'))) {
+    const manifest = JSON.parse(await readFile(packageJsonPath, 'utf8')) as { name: string; exports?: string };
+    if (typeof manifest.exports === 'string') {
+      workspaceExports.set(manifest.name, relative(root, resolve(dirname(packageJsonPath), manifest.exports)));
+    }
+  }
+
+  const pending = entries.map((entry) => resolve(root, entry));
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    const localPath = relative(root, current);
+    if (visited.has(localPath)) continue;
+    visited.add(localPath);
+
+    const source = await readFile(current, 'utf8');
+    const imports = source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?)["']([^"']+)["']/g);
+    for (const match of imports) {
+      const dependency = await resolveLocalImport(current, match[1], workspaceExports);
+      if (dependency !== undefined) pending.push(dependency);
+    }
+  }
+  return visited;
+}
+
 describe('deployment contract', () => {
   it('installs private packages only through an ephemeral BuildKit npmrc secret', async () => {
     const dockerfile = await text('Dockerfile');
@@ -70,23 +122,48 @@ describe('deployment contract', () => {
 
   it('ships the current monorepo runtime paths in one production image', async () => {
     const dockerfile = await text('Dockerfile');
+    const packageJson = JSON.parse(await text('package.json')) as { scripts: Record<string, string> };
     expect(dockerfile).toContain('FROM oven/bun:1.3.14 AS production');
     expect(dockerfile).toMatch(/^COPY --from=build .*\/app\/apps .*\/app\/apps$/m);
     expect(dockerfile).toMatch(/^COPY --from=build .*\/app\/packages .*\/app\/packages$/m);
     expect(dockerfile).toContain('CMD ["bun", "run", "apps/api/src/main.ts"]');
 
-    for (const command of Object.values(workloadCommands)) {
+    const entrypoints = Object.values(workloadCommands).map((command) => {
       const target = command.at(-1)!;
-      if (target.includes('/')) await expect(Bun.file(resolve(root, target)).exists()).resolves.toBe(true);
-    }
+      const script = packageJson.scripts[target];
+      return script === undefined ? target : script.split(/\s+/).at(-1)!;
+    });
+    const closure = await runtimeDependencyClosure(entrypoints);
+    const productionStage = dockerfile.slice(dockerfile.indexOf('FROM oven/bun:1.3.14 AS production'));
+    const copiedRoots = new Set(Array.from(
+      productionStage.matchAll(/^COPY --from=\S+ \/app\/(\S+) \/app\/\1$/gm),
+      (match) => match[1],
+    ));
+    const missingFromImage = Array.from(closure).filter((path) => !copiedRoots.has(path.split('/')[0]));
+
+    expect(entrypoints).toEqual([
+      'apps/api/src/main.ts',
+      'apps/worker/src/main.ts',
+      'apps/notify-worker/src/delivery.worker.ts',
+      'packages/database/scripts/migrate.ts',
+      'packages/database/scripts/seed.ts',
+    ]);
+    expect(closure).toContain('packages/database/src/index.ts');
+    expect(closure).toContain('packages/domain/src/index.ts');
+    expect(closure).toContain('scripts/lib/local-database-guard.ts');
+    expect(missingFromImage).toEqual([]);
   });
 
   it('uses the production image and guarded job ordering in the full Compose stack', async () => {
     const localCompose = yaml<ComposeFile>(await text('docker-compose.yml'));
     const compose = yaml<ComposeFile>(await text('deploy/compose/docker-compose.yml'));
+    const deployReadme = await text('deploy/README.md');
     expect(localCompose.name).toBe('flowkit-demo');
     expect(Object.keys(localCompose.services)).toEqual(['postgres', 'temporal', 'temporal-namespace', 'mailpit']);
     expect(compose.secrets?.npmrc?.file).toBe('${FLOWKIT_NPMRC_PATH:-../../.npmrc}');
+    expect(deployReadme.replace(/\s+/g, ' ')).toContain(
+      'Compose defaults to the repository-root `.npmrc`; Tilt defaults to `$HOME/.npmrc`.',
+    );
 
     for (const [serviceName, command] of Object.entries(workloadCommands)) {
       const service = compose.services[serviceName];
