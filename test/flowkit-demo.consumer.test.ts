@@ -11,6 +11,7 @@ import { clearDurableLeaveServiceData, durableLeaveServiceDatabase } from './dur
 
 const sql = await durableLeaveServiceDatabase('Flowkit demo consumer');
 const durableTests = sql ? describe : describe.skip;
+const scope = { organizationId: 'acme-demo' };
 const employee = { id: 'employee-1', roles: ['employee'] };
 const manager1 = { id: 'manager-1', roles: ['manager'] };
 const manager2 = { id: 'manager-2', roles: ['manager'] };
@@ -66,16 +67,16 @@ durableTests('Flowkit demo consumer', () => {
     const consumer = createFlowkitDemoConsumer({ repository, runtime });
 
     try {
-      const flow = await consumer.start({ flowId: 'leave-1', subject: fiveDayLeave, actor: employee, operationId: 'start-1' });
+      const flow = await consumer.start(scope, { flowId: 'leave-1', subject: fiveDayLeave, actor: employee, operationId: 'start-1' });
       const [request] = await sql!<{ definition_hash: string }[]>`
         SELECT definition_hash FROM leave_requests WHERE id = ${fiveDayLeave.id}
       `;
       expect(request?.definition_hash).toBe(publishedLeaveDefinition.definitionHash);
-      await consumer.act({ flowId: flow.id, action: 'submit', actor: employee, operationId: 'submit-1' });
-      await eventually(async () => expect((await consumer.getFlow(flow.id)).state.stage).toBe('manager_review'));
-      const [task] = (await consumer.tasks.list({ actor: manager1 })).items;
-      await consumer.tasks.claim({ taskId: task!.id, expectedRevision: task!.revision, actor: manager1, operationId: 'claim-1' });
-      await expect(consumer.act({ flowId: flow.id, action: 'approve', actor: manager2, operationId: 'approve-2' })).rejects.toThrow('task_not_owned');
+      await consumer.act(scope, { flowId: flow.id, action: 'submit', actor: employee, operationId: 'submit-1' });
+      await eventually(async () => expect((await consumer.getFlow(scope, flow.id)).state.stage).toBe('manager_review'));
+      const [task] = (await consumer.tasks(scope).list({ actor: manager1 })).items;
+      await consumer.tasks(scope).claim({ taskId: task!.id, expectedRevision: task!.revision, actor: manager1, operationId: 'claim-1' });
+      await expect(consumer.act(scope, { flowId: flow.id, action: 'approve', actor: manager2, operationId: 'approve-2' })).rejects.toThrow('task_not_owned');
     } finally {
       await worker.shutdown();
       await runWorker;

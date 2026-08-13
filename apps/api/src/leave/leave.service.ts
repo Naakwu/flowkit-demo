@@ -1,7 +1,7 @@
 import type { FlowCommand, FlowState } from '@naakwu/flowkit-core';
 import type { FlowTask } from '@naakwu/flowkit-tasks';
 
-import { LeaveFlowRepository } from '@flowkit-demo/database';
+import { LeaveFlowRepository, type TenantScope } from '@flowkit-demo/database';
 import { FlowkitDemoConsumer, newLeaveFlowId } from '../flow/flowkit-demo.consumer';
 import { leaveRequestSchema, type LeaveRequest } from '@flowkit-demo/domain';
 
@@ -22,11 +22,13 @@ export class LeaveService {
   readonly consumer: FlowkitDemoConsumer;
   readonly tasks;
   readonly outbox;
+  readonly scope: TenantScope;
 
-  constructor(repository = new LeaveFlowRepository()) {
+  constructor(repository = new LeaveFlowRepository(), scope: TenantScope = { organizationId: 'acme-demo' }) {
     this.repository = repository;
     this.consumer = new FlowkitDemoConsumer({ repository });
-    this.tasks = repository.tasks;
+    this.scope = scope;
+    this.tasks = repository.tasks.forOrganization(scope);
     this.outbox = repository.outbox;
   }
 
@@ -35,14 +37,14 @@ export class LeaveService {
   }
 
   async listNotifications(recipientId: string) {
-    return this.outbox.listForRecipient(recipientId);
+    return this.outbox.listForRecipient(this.scope, recipientId);
   }
 
   async create(input: unknown, employeeId: string): Promise<LeaveRecord> {
     const request = leaveRequestSchema.parse({ ...(input as object), employeeId });
     const id = newLeaveFlowId();
     const flowId = `flow-${id}`;
-    const state = await this.consumer.start({
+    const state = await this.consumer.start(this.scope, {
       flowId,
       subject: { id, metadata: request },
       actor: { id: employeeId, roles: ['employee'] },
@@ -52,9 +54,9 @@ export class LeaveService {
   }
 
   async get(id: string): Promise<LeaveRecord | null> {
-    const request = await this.repository.getRequest(id);
+    const request = await this.repository.getRequest(this.scope, id);
     if (!request) return null;
-    const state = await this.consumer.getFlow(request.flow_id);
+    const state = await this.consumer.getFlow(this.scope, request.flow_id);
     return {
       id: request.id,
       flowId: request.flow_id,
@@ -73,9 +75,9 @@ export class LeaveService {
   }
 
   async command(id: string, command: FlowCommand, actor: { id: string; roles: string[] }): Promise<LeaveRecord> {
-    const request = await this.repository.getRequest(id);
+    const request = await this.repository.getRequest(this.scope, id);
     if (!request) throw new Error('leave_not_found');
-    await this.consumer.act({
+    await this.consumer.act(this.scope, {
       flowId: request.flow_id,
       action: command.action,
       comment: command.comment,

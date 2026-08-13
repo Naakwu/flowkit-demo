@@ -5,6 +5,7 @@ import type { Sql, TransactionSql } from 'postgres';
 
 import { createDemoDatabaseClient } from './client';
 import { jsonb } from './jsonb';
+import { requireTenantScope, type TenantScope } from './tenant-scope';
 
 type Executor = Sql | TransactionSql;
 type OutboxRow = {
@@ -25,7 +26,7 @@ const asDate = (value: Date | string) => value instanceof Date ? value : new Dat
 const envelopeOf = (payload: OutboxRow['payload']): NotificationDeliveryEnvelope => typeof payload === 'string' ? JSON.parse(payload) : payload;
 
 /** PostgreSQL adapter for NotificationOutboxStore, including lease ownership. */
-export class PostgresOutboxStore implements NotificationOutboxStore {
+export class PostgresOutboxStore {
   readonly sql: Sql;
   private readonly ownsClient: boolean;
 
@@ -34,18 +35,34 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
     this.sql = sql ?? createDemoDatabaseClient();
   }
 
-  async insert(envelopes: NotificationDeliveryEnvelope[]) {
-    return this.insertInTransaction(envelopes, this.sql);
+  forOrganization(scope: TenantScope): NotificationOutboxStore {
+    requireTenantScope(scope);
+    return {
+      insert: (envelopes) => this.insert(scope, envelopes),
+      claimDue: (owner, now, leaseMs, limit) => this.claimDue(scope, owner, now, leaseMs, limit),
+      recordDelivered: (input) => this.recordDelivered(scope, input),
+      recordRetry: (input) => this.recordRetry(scope, input),
+      recordFailed: (input) => this.recordFailed(scope, input),
+      recordSkipped: (input) => this.recordSkipped(scope, input),
+      recordReconciliation: (input) => this.recordReconciliation(scope, input),
+      recoverExpired: (now) => this.recoverExpired(scope, now),
+    };
   }
 
-  async insertInTransaction(envelopes: NotificationDeliveryEnvelope[], executor: Executor) {
+  async insert(scope: TenantScope, envelopes: NotificationDeliveryEnvelope[]) {
+    requireTenantScope(scope);
+    return this.insertInTransaction(scope, envelopes, this.sql);
+  }
+
+  async insertInTransaction(scope: TenantScope, envelopes: NotificationDeliveryEnvelope[], executor: Executor) {
+    requireTenantScope(scope);
     const inserted: NotificationDeliveryEnvelope[] = [];
     const existing: NotificationDeliveryEnvelope[] = [];
     for (const envelope of envelopes) {
       const [row] = await executor<{ id: string }[]>`
-        INSERT INTO notification_outbox (id, dedupe_key, channel, status, attempt_count, available_at, payload)
-        VALUES (${`delivery-${randomUUID()}`}, ${envelope.dedupeKey}, ${envelope.channel}, 'pending', 0, now(), ${jsonb(this.sql, envelope)})
-        ON CONFLICT (dedupe_key) DO NOTHING
+        INSERT INTO notification_outbox (organization_id, id, dedupe_key, channel, status, attempt_count, available_at, payload)
+        VALUES (${scope.organizationId}, ${`delivery-${randomUUID()}`}, ${envelope.dedupeKey}, ${envelope.channel}, 'pending', 0, now(), ${jsonb(this.sql, envelope)})
+        ON CONFLICT (organization_id, dedupe_key) DO NOTHING
         RETURNING id
       `;
       (row ? inserted : existing).push(envelope);
@@ -53,11 +70,12 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
     return { inserted, existing };
   }
 
-  async claimDue(owner: string, now: Date, leaseMs: number, limit: number): Promise<ClaimedDelivery[]> {
+  async claimDue(scope: TenantScope, owner: string, now: Date, leaseMs: number, limit: number): Promise<ClaimedDelivery[]> {
+    requireTenantScope(scope);
     return this.sql.begin(async (tx) => {
       const rows = await tx<OutboxRow[]>`
         SELECT * FROM notification_outbox
-        WHERE status = 'pending' AND available_at <= ${now.toISOString()}
+        WHERE organization_id = ${scope.organizationId} AND status = 'pending' AND available_at <= ${now.toISOString()}
         ORDER BY available_at ASC
         LIMIT ${limit}
         FOR UPDATE SKIP LOCKED
@@ -69,7 +87,7 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
           UPDATE notification_outbox
           SET status = 'leased', lease_owner = ${owner}, lease_expires_at = ${leaseExpiresAt.toISOString()},
               attempt_count = attempt_count + 1
-          WHERE id = ${row.id} AND status = 'pending'
+          WHERE organization_id = ${scope.organizationId} AND id = ${row.id} AND status = 'pending'
           RETURNING *
         `;
         if (updated) claimed.push({
@@ -81,39 +99,40 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
     });
   }
 
-  async recordDelivered(input: { id: string; owner: string; providerMessageId?: string; receipt?: JsonValue }): Promise<void> {
-    await this.updateOwned(input.id, input.owner, {
+  async recordDelivered(scope: TenantScope, input: { id: string; owner: string; providerMessageId?: string; receipt?: JsonValue }): Promise<void> {
+    await this.updateOwned(scope, input.id, input.owner, {
       status: 'delivered', providerMessageId: input.providerMessageId ?? null,
       deliveredAt: new Date().toISOString(), leaseOwner: null, leaseExpiresAt: null,
     });
   }
 
-  async recordRetry(input: { id: string; owner: string; availableAt: Date; errorCode: string; message: string }): Promise<void> {
-    await this.updateOwned(input.id, input.owner, {
+  async recordRetry(scope: TenantScope, input: { id: string; owner: string; availableAt: Date; errorCode: string; message: string }): Promise<void> {
+    await this.updateOwned(scope, input.id, input.owner, {
       status: 'pending', availableAt: input.availableAt.toISOString(), errorCode: input.errorCode,
       errorMessage: input.message, leaseOwner: null, leaseExpiresAt: null,
     });
   }
 
-  async recordFailed(input: { id: string; owner: string; errorCode: string; message: string }): Promise<void> {
-    await this.updateOwned(input.id, input.owner, {
+  async recordFailed(scope: TenantScope, input: { id: string; owner: string; errorCode: string; message: string }): Promise<void> {
+    await this.updateOwned(scope, input.id, input.owner, {
       status: 'failed', errorCode: input.errorCode, errorMessage: input.message, leaseOwner: null, leaseExpiresAt: null,
     });
   }
 
-  async recordSkipped(input: { id: string; owner: string; reason: string }): Promise<void> {
-    await this.updateOwned(input.id, input.owner, {
+  async recordSkipped(scope: TenantScope, input: { id: string; owner: string; reason: string }): Promise<void> {
+    await this.updateOwned(scope, input.id, input.owner, {
       status: 'skipped', errorCode: 'SKIPPED', errorMessage: input.reason, leaseOwner: null, leaseExpiresAt: null,
     });
   }
 
-  async recordReconciliation(input: { id: string; owner: string; reason: string }): Promise<void> {
-    await this.updateOwned(input.id, input.owner, {
+  async recordReconciliation(scope: TenantScope, input: { id: string; owner: string; reason: string }): Promise<void> {
+    await this.updateOwned(scope, input.id, input.owner, {
       status: 'reconciliation_required', errorCode: 'AMBIGUOUS', errorMessage: input.reason, leaseOwner: null, leaseExpiresAt: null,
     });
   }
 
-  async recoverExpired(now: Date): Promise<number> {
+  async recoverExpired(scope: TenantScope, now: Date): Promise<number> {
+    requireTenantScope(scope);
     const rows = await this.sql<{ id: string }[]>`
       UPDATE notification_outbox
       SET status = CASE WHEN channel = 'email' THEN 'reconciliation_required' ELSE 'pending' END,
@@ -124,16 +143,18 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
           END,
           lease_owner = NULL,
           lease_expires_at = NULL
-      WHERE status = 'leased' AND lease_expires_at <= ${now.toISOString()}
+      WHERE organization_id = ${scope.organizationId} AND status = 'leased' AND lease_expires_at <= ${now.toISOString()}
       RETURNING id
     `;
     return rows.length;
   }
 
-  async listForRecipient(recipientId: string): Promise<Array<{ id: string; status: OutboxRow['status']; subject: string }>> {
+  async listForRecipient(scope: TenantScope, recipientId: string): Promise<Array<{ id: string; status: OutboxRow['status']; subject: string }>> {
+    requireTenantScope(scope);
     const rows = await this.sql<OutboxRow[]>`
       SELECT * FROM notification_outbox
-      WHERE payload->'recipient'->>'canonicalKey' = ${recipientId}
+      WHERE organization_id = ${scope.organizationId}
+        AND payload->'recipient'->>'canonicalKey' = ${recipientId}
       ORDER BY available_at ASC
     `;
     return rows.map((row) => ({ id: row.id, status: row.status, subject: envelopeOf(row.payload).rendered.subject }));
@@ -143,10 +164,11 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
     if (this.ownsClient) await this.sql.end({ timeout: 5 });
   }
 
-  private async updateOwned(id: string, owner: string, values: {
+  private async updateOwned(scope: TenantScope, id: string, owner: string, values: {
     status: OutboxRow['status']; availableAt?: string; providerMessageId?: string | null; deliveredAt?: string;
     errorCode?: string; errorMessage?: string; leaseOwner: string | null; leaseExpiresAt: string | null;
   }): Promise<void> {
+    requireTenantScope(scope);
     const rows = await this.sql<{ id: string }[]>`
       UPDATE notification_outbox
       SET status = ${values.status},
@@ -157,7 +179,7 @@ export class PostgresOutboxStore implements NotificationOutboxStore {
           last_error_message = ${values.errorMessage ?? null},
           lease_owner = ${values.leaseOwner},
           lease_expires_at = ${values.leaseExpiresAt}::timestamptz
-      WHERE id = ${id} AND status = 'leased' AND lease_owner = ${owner}
+      WHERE organization_id = ${scope.organizationId} AND id = ${id} AND status = 'leased' AND lease_owner = ${owner}
       RETURNING id
     `;
     if (rows.length !== 1) throw new Error('notification delivery lease is no longer valid');
@@ -175,8 +197,9 @@ export type DurableDelivery = {
 };
 
 /** Test/read-model helper; delivery remains owned by the outbox adapter. */
-export async function readDelivery(sql: Sql, id: string): Promise<DurableDelivery | null> {
-  const [row] = await sql<OutboxRow[]>`SELECT * FROM notification_outbox WHERE id = ${id} LIMIT 1`;
+export async function readDelivery(scope: TenantScope, sql: Sql, id: string): Promise<DurableDelivery | null> {
+  requireTenantScope(scope);
+  const [row] = await sql<OutboxRow[]>`SELECT * FROM notification_outbox WHERE organization_id = ${scope.organizationId} AND id = ${id} LIMIT 1`;
   return row ? {
     id: row.id, status: row.status, attemptCount: row.attempt_count, providerMessageId: row.provider_message_id,
     deliveredAt: row.delivered_at ? asDate(row.delivered_at) : null,

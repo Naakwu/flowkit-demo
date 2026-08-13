@@ -7,12 +7,13 @@ import type { AuthenticatedPrincipal } from '@naakwu/flowkit-auth';
 import type { FlowkitConsumerView } from '@naakwu/flowkit-consumer';
 
 import { OrganizationContextGuard } from './auth/auth.module';
-import type { LeaveRequestRow } from '@flowkit-demo/database';
+import type { LeaveRequestRow, TenantScope } from '@flowkit-demo/database';
+import type { OrganizationContext } from './auth/organization-context';
 import { FlowkitDemoConsumer, newLeaveFlowId } from './flow/flowkit-demo.consumer';
 import { leaveRequestSchema } from '@flowkit-demo/domain';
 import { asFlowkitHttpException } from './flowkit-http.errors';
 
-type SessionRequest = { principal: AuthenticatedPrincipal };
+type SessionRequest = { principal: AuthenticatedPrincipal; organizationContext: OrganizationContext };
 type ActionBody = { action?: unknown; comment?: unknown };
 const supportedActions = new Set(['submit', 'withdraw', 'approve', 'reject', 'return']);
 
@@ -29,13 +30,13 @@ export class FlowController {
       const request = leaveRequestSchema.parse({ ...(body as object), employeeId: current.subjectId });
       const id = newLeaveFlowId();
       const flowId = `flow-${id}`;
-      const state = await this.consumer.start({
+      const state = await this.consumer.start(req.organizationContext, {
         flowId,
         subject: { id, metadata: request },
         actor: { id: current.subjectId, roles: [current.role] },
         operationId: `${id}:start:${randomUUID()}`,
       });
-      return await this.project(id, state);
+      return await this.project(req.organizationContext, id, state);
     } catch (error) {
       if (error instanceof ZodError) throw new BadRequestException(error.flatten());
       throw asFlowkitHttpException(error);
@@ -44,9 +45,9 @@ export class FlowController {
 
   @Get(':id')
   async get(@Param('id') id: string, @Req() req: SessionRequest) {
-    const request = await this.requireVisibleRequest(id, req.principal);
+    const request = await this.requireVisibleRequest(req.organizationContext, id, req.principal);
     try {
-      return await this.project(id, await this.consumer.getFlow(request.flow_id), request);
+      return await this.project(req.organizationContext, id, await this.consumer.getFlow(req.organizationContext, request.flow_id), request);
     } catch (error) {
       throw asFlowkitHttpException(error);
     }
@@ -56,8 +57,8 @@ export class FlowController {
    * Every flow response uses one shape so the browser never has to know whether it created or
    * reloaded the flow. Keys mirror the persisted projection row, not the parsed request body.
    */
-  private async project(id: string, state: FlowkitConsumerView, known?: LeaveRequestRow) {
-    const request = known ?? await this.consumer.repository.getRequest(id);
+  private async project(scope: TenantScope, id: string, state: FlowkitConsumerView, known?: LeaveRequestRow) {
+    const request = known ?? await this.consumer.repository.getRequest(scope, id);
     if (!request) throw new NotFoundException('Flow not found.');
     return {
       ...request,
@@ -65,7 +66,7 @@ export class FlowController {
       state: state.state,
       sequence: state.sequence,
       nextActions: state.nextActions,
-      activities: await this.consumer.repository.listActivities(id),
+      activities: await this.consumer.repository.listActivities(scope, id),
     };
   }
 
@@ -76,10 +77,10 @@ export class FlowController {
     }
     if (body.comment !== undefined && typeof body.comment !== 'string') throw new BadRequestException('Action comment must be a string.');
 
-    const request = await this.requireVisibleRequest(id, req.principal);
+    const request = await this.requireVisibleRequest(req.organizationContext, id, req.principal);
     await this.authorizeAction(body.action, request, req.principal);
     try {
-      return await this.consumer.act({
+      return await this.consumer.act(req.organizationContext, {
         flowId: request.flow_id,
         action: body.action,
         comment: body.comment,
@@ -91,8 +92,8 @@ export class FlowController {
     }
   }
 
-  private async requireVisibleRequest(id: string, current: AuthenticatedPrincipal) {
-    const request = await this.consumer.repository.getRequest(id);
+  private async requireVisibleRequest(scope: TenantScope, id: string, current: AuthenticatedPrincipal) {
+    const request = await this.consumer.repository.getRequest(scope, id);
     if (!request) throw new NotFoundException('Flow not found.');
     const canView = (current.role === 'employee' && request.employee_id === current.subjectId)
       || (current.role === 'manager' && request.manager_id === current.subjectId)
@@ -102,7 +103,7 @@ export class FlowController {
     return request;
   }
 
-  private async authorizeAction(action: string, request: { id: string; flow_id: string; employee_id: string; manager_id: string }, current: AuthenticatedPrincipal) {
+  private async authorizeAction(action: string, request: { organization_id: string; id: string; flow_id: string; employee_id: string; manager_id: string }, current: AuthenticatedPrincipal) {
     if (action === 'submit' || action === 'withdraw') {
       if (current.role !== 'employee' || current.readOnly || request.employee_id !== current.subjectId) {
         throw new ForbiddenException('Only the requesting employee can perform this action.');
@@ -112,7 +113,7 @@ export class FlowController {
     if (current.role !== 'manager' || current.readOnly || request.manager_id !== current.subjectId) {
       throw new ForbiddenException('Only the assigned manager can perform this action.');
     }
-    const task = await this.consumer.repository.tasks.find({
+    const task = await this.consumer.repository.tasks.find({ organizationId: request.organization_id }, {
       namespace: 'flowkit-demo', flowId: request.flow_id, subjectType: 'leave', subjectId: request.id,
       stage: 'manager_review', role: 'manager',
     });

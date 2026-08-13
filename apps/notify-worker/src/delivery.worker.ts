@@ -1,14 +1,15 @@
-import { NotificationAdapterRegistry, NotificationDeliveryRuntime, type RegisteredAdapter } from '@naakwu/flowkit-notify';
+import { NotificationAdapterRegistry, NotificationDeliveryRuntime, type NotificationChannelAdapter, type RegisteredAdapter } from '@naakwu/flowkit-notify';
 
 import { loadConfig } from '@flowkit-demo/domain';
 import { PostgresOutboxStore } from '@flowkit-demo/database';
 import { RuntimeHealthRepository } from '@flowkit-demo/database';
 import { MailpitSmtpAdapter } from './mailpit-smtp.adapter';
 import { PostgresInboxAdapter } from '@flowkit-demo/database';
+import type { TenantScope } from '@flowkit-demo/database';
 
 const retryPolicy = { maxAttempts: 3, initialDelayMs: 1_000, multiplier: 2, maxDelayMs: 10_000 };
 
-export function createDeliveryAdapters(options: { inbox: PostgresInboxAdapter; smtp: MailpitSmtpAdapter }): NotificationAdapterRegistry {
+export function createDeliveryAdapters(options: { inbox: NotificationChannelAdapter; smtp: MailpitSmtpAdapter }): NotificationAdapterRegistry {
   const adapters = new NotificationAdapterRegistry();
   const registered: RegisteredAdapter[] = [
     { channel: options.inbox.channel, idempotent: options.inbox.idempotent, send: options.inbox.send.bind(options.inbox), enabled: true, retryPolicy },
@@ -20,12 +21,13 @@ export function createDeliveryAdapters(options: { inbox: PostgresInboxAdapter; s
 }
 
 export async function runDeliveryCycle(options: {
+  scope: TenantScope;
   owner: string;
   outbox: PostgresOutboxStore;
   adapters: NotificationAdapterRegistry;
   health: RuntimeHealthRepository;
 }): Promise<{ claimed: number }> {
-  const runtime = new NotificationDeliveryRuntime({ store: options.outbox, adapters: options.adapters });
+  const runtime = new NotificationDeliveryRuntime({ store: options.outbox.forOrganization(options.scope), adapters: options.adapters });
   const claimed = await runtime.claimAndDeliver(options.owner, 50);
   await options.health.heartbeat('delivery-worker');
   return { claimed };
@@ -45,6 +47,7 @@ export function sleep(milliseconds: number, signal: AbortSignal): Promise<void> 
 }
 
 export async function runDeliveryLoop(signal: AbortSignal, options: {
+  scope: TenantScope;
   owner: string;
   outbox: PostgresOutboxStore;
   adapters: NotificationAdapterRegistry;
@@ -68,7 +71,6 @@ if (import.meta.main) {
   const outbox = new PostgresOutboxStore();
   const inbox = new PostgresInboxAdapter(outbox.sql);
   const smtp = new MailpitSmtpAdapter();
-  const adapters = createDeliveryAdapters({ inbox, smtp });
   const health = new RuntimeHealthRepository(outbox.sql);
   const config = loadConfig();
   const controller = new AbortController();
@@ -77,15 +79,22 @@ if (import.meta.main) {
   process.once('SIGINT', stop);
   try {
     process.stdout.write(`${JSON.stringify({ status: 'ready', worker: 'delivery-worker' })}\n`);
-    await runDeliveryLoop(controller.signal, {
-      owner: `delivery-worker-${process.pid}`,
-      outbox,
-      adapters,
-      health,
-      activePollMs: config.FLOWKIT_DEMO_NOTIFY_ACTIVE_POLL_MS,
-      idlePollMs: config.FLOWKIT_DEMO_NOTIFY_IDLE_POLL_MS,
-      logger: console,
-    });
+    const rows = await outbox.sql<Array<{ organization_id: string }>>`
+      SELECT id AS organization_id FROM better_auth.organization ORDER BY id
+    `;
+    await Promise.all(rows.map(({ organization_id: organizationId }) => {
+      const scope = { organizationId };
+      return runDeliveryLoop(controller.signal, {
+        scope,
+        owner: `delivery-worker-${process.pid}-${organizationId}`,
+        outbox,
+        adapters: createDeliveryAdapters({ inbox: inbox.forOrganization(scope), smtp }),
+        health,
+        activePollMs: config.FLOWKIT_DEMO_NOTIFY_ACTIVE_POLL_MS,
+        idlePollMs: config.FLOWKIT_DEMO_NOTIFY_IDLE_POLL_MS,
+        logger: console,
+      });
+    }));
   } finally {
     process.off('SIGTERM', stop);
     process.off('SIGINT', stop);

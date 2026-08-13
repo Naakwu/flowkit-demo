@@ -17,7 +17,9 @@ export function principal(id: string, role: keyof typeof roleRegistry.definition
 
 /** Resolves only the seeded workflow identities; HTTP authentication never calls this adapter. */
 export async function resolveDemoActor(id: string): Promise<FlowkitActorRef> {
-  const role = canonicalRoles[id as keyof typeof canonicalRoles];
+  const seeded = /^(acme-demo|globex-demo)-(employee|manager|hr|readonly_auditor)$/.exec(id);
+  const role = seeded?.[2] as keyof typeof roleRegistry.definitions | undefined
+    ?? canonicalRoles[id as keyof typeof canonicalRoles];
   if (!role) throw new Error('actor_not_found');
-  return { id, roles: [role] };
+  return { id, roles: [role], ...(seeded ? { organizationId: seeded[1] } : {}) };
 }

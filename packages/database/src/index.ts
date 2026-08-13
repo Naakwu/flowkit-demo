@@ -7,4 +7,5 @@ export * from './postgres-task-store';
 export * from './runtime-health.repository';
 export * from './runtime-store';
 export * from './schema';
+export * from './tenant-scope';
 export * from './transaction';

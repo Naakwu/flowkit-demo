@@ -12,6 +12,7 @@ const sql = await durableTestDatabase('leave flow operation scope', [
   'flow_task_projection_operations', 'flow_task_invitations', 'notification_outbox', 'audit_events',
 ]);
 const durableTests = sql ? describe : describe.skip;
+const scope = { organizationId: 'acme-demo' };
 
 afterEach(async () => {
   if (!sql) return;
@@ -56,7 +57,7 @@ function ruleTransition(id: string): RecordTransitionInput {
 }
 
 async function seedRequest(repository: LeaveFlowRepository, id: string) {
-  await repository.createRequest({
+  await repository.createRequest(scope, {
     id,
     flowId: `flow-${id}`,
     request: {
@@ -75,8 +76,8 @@ durableTests('leave flow operation scope', () => {
     await seedRequest(repository, 'leave-scope-a');
     await seedRequest(repository, 'leave-scope-b');
 
-    const first = await repository.recordTransition(ruleTransition('leave-scope-a'));
-    const second = await repository.recordTransition(ruleTransition('leave-scope-b'));
+    const first = await repository.recordTransition(scope, ruleTransition('leave-scope-a'));
+    const second = await repository.recordTransition(scope, ruleTransition('leave-scope-b'));
 
     expect(first).toMatchObject({ state: evaluating, created: true });
     expect(second).toMatchObject({ state: evaluating, created: true });
@@ -94,11 +95,11 @@ durableTests('leave flow operation scope', () => {
     await seedRequest(repository, 'leave-scope-a');
 
     const input = ruleTransition('leave-scope-a');
-    await repository.recordTransition(input);
-    const replay = await repository.recordTransition(input);
+    await repository.recordTransition(scope, input);
+    const replay = await repository.recordTransition(scope, input);
 
     expect(replay).toMatchObject({ state: evaluating, created: false });
-    expect(await repository.findPriorResult(input.workflowId, ruleOperationId)).toMatchObject({ created: false });
+    expect(await repository.findPriorResult(scope, input.workflowId, ruleOperationId)).toMatchObject({ created: false });
     const [count] = await sql!<Array<{ total: string }>>`SELECT count(*)::text AS total FROM leave_transitions`;
     expect(count!.total).toBe('1');
   });

@@ -7,8 +7,9 @@ import type { AuthenticatedPrincipal } from '@naakwu/flowkit-auth';
 import { OrganizationContextGuard } from './auth/auth.module';
 import { FlowkitDemoConsumer } from './flow/flowkit-demo.consumer';
 import { asFlowkitHttpException } from './flowkit-http.errors';
+import type { OrganizationContext } from './auth/organization-context';
 
-type SessionRequest = { principal: AuthenticatedPrincipal };
+type SessionRequest = { principal: AuthenticatedPrincipal; organizationContext: OrganizationContext };
 
 @Controller('tasks')
 @UseGuards(OrganizationContextGuard)
@@ -18,7 +19,7 @@ export class TasksController {
   @Get()
   async list(@Req() req: SessionRequest) {
     try {
-      return (await this.consumer.tasks.list({ actor: { id: req.principal.subjectId, roles: [req.principal.role] } })).items;
+      return (await this.consumer.tasks(req.organizationContext).list({ actor: { id: req.principal.subjectId, roles: [req.principal.role] } })).items;
     } catch (error) {
       throw asFlowkitHttpException(error);
     }
@@ -30,11 +31,11 @@ export class TasksController {
     if (typeof expectedRevision !== 'number' || !Number.isInteger(expectedRevision) || expectedRevision < 0) {
       throw new BadRequestException('expectedRevision must be a non-negative integer.');
     }
-    const task = await this.consumer.repository.tasks.get(id);
+    const task = await this.consumer.repository.tasks.get(req.organizationContext, id);
     if (!task) throw new NotFoundException('Task not found.');
-    await this.requireAssignedManager(task, req.principal);
+    await this.requireAssignedManager(task, req.principal, req.organizationContext);
     try {
-      return await this.consumer.tasks.claim({
+      return await this.consumer.tasks(req.organizationContext).claim({
         taskId: task.id,
         expectedRevision,
         actor: { id: req.principal.subjectId, roles: [req.principal.role] },
@@ -45,11 +46,15 @@ export class TasksController {
     }
   }
 
-  private async requireAssignedManager(task: { subjectType: string; subjectId: string; role: string }, current: AuthenticatedPrincipal) {
+  private async requireAssignedManager(
+    task: { subjectType: string; subjectId: string; role: string },
+    current: AuthenticatedPrincipal,
+    scope: OrganizationContext,
+  ) {
     if (current.role !== 'manager' || current.readOnly || task.subjectType !== 'leave' || task.role !== 'manager') {
       throw new ForbiddenException('Only the assigned manager can claim this task.');
     }
-    const request = await this.consumer.repository.getRequest(task.subjectId);
+    const request = await this.consumer.repository.getRequest(scope, task.subjectId);
     if (!request || request.manager_id !== current.subjectId) {
       throw new ForbiddenException('Only the assigned manager can claim this task.');
     }

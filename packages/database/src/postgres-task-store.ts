@@ -19,9 +19,11 @@ import type { Sql, TransactionSql } from 'postgres';
 
 import { createDemoDatabaseClient } from './client';
 import { jsonb } from './jsonb';
+import { requireTenantScope, type TenantScope } from './tenant-scope';
 
 type Executor = Sql | TransactionSql;
 type TaskRow = {
+  organization_id: string;
   id: string;
   flow_id: string;
   subject_id: string;
@@ -75,7 +77,7 @@ const statusForEvent = (eventType: TaskEventType): FlowTaskStatus => {
  * FAAN production schema. Namespace/subject type are fixed by this consumer,
  * while timestamps are derived from its durable task-event history.
  */
-export class PostgresTaskStore implements TaskStore {
+export class PostgresTaskStore {
   readonly sql: Sql;
   private readonly ownsClient: boolean;
 
@@ -84,14 +86,36 @@ export class PostgresTaskStore implements TaskStore {
     this.sql = sql ?? createDemoDatabaseClient();
   }
 
-  async get(taskId: string): Promise<FlowTask | null> {
-    const [row] = await this.taskRows(this.sql, this.sql`WHERE t.id = ${taskId}`);
+  forOrganization(scope: TenantScope): TaskStore {
+    requireTenantScope(scope);
+    return {
+      get: (taskId) => this.get(scope, taskId),
+      find: (reference) => this.find(scope, reference),
+      applyProjection: (input) => this.applyProjection(scope, input),
+      claim: (command) => this.claim(scope, command),
+      release: (command) => this.release(scope, command),
+      reassign: (command) => this.reassign(scope, command),
+      history: (taskId) => this.history(scope, taskId),
+      inbox: (query) => this.inbox(scope, query),
+      latestMakerCompletion: (input) => this.latestMakerCompletion(scope, input),
+      createInvitation: (input) => this.createInvitation(scope, input),
+      getInvitationByTokenHash: (tokenHash) => this.getInvitationByTokenHash(scope, tokenHash),
+      redeemInvitation: (input) => this.redeemInvitation(scope, input),
+      revokeInvitation: (input) => this.revokeInvitation(scope, input),
+    };
+  }
+
+  async get(scope: TenantScope, taskId: string): Promise<FlowTask | null> {
+    requireTenantScope(scope);
+    const [row] = await this.taskRows(this.sql, this.sql`WHERE t.organization_id = ${scope.organizationId} AND t.id = ${taskId}`);
     return row ? this.task(row) : null;
   }
 
-  async find(reference: TaskReference): Promise<FlowTask | null> {
+  async find(scope: TenantScope, reference: TaskReference): Promise<FlowTask | null> {
+    requireTenantScope(scope);
     const [row] = await this.taskRows(this.sql, this.sql`
-      WHERE t.flow_id = ${reference.flowId}
+      WHERE t.organization_id = ${scope.organizationId}
+        AND t.flow_id = ${reference.flowId}
         AND t.subject_id = ${reference.subjectId}
         AND t.stage = ${reference.stage}
         AND t.role_key = ${reference.role}
@@ -99,9 +123,11 @@ export class PostgresTaskStore implements TaskStore {
     return row ? this.task(row, reference.namespace, reference.subjectType) : null;
   }
 
-  async findInTransaction(tx: TransactionSql, reference: TaskReference): Promise<FlowTask | null> {
+  async findInTransaction(scope: TenantScope, tx: TransactionSql, reference: TaskReference): Promise<FlowTask | null> {
+    requireTenantScope(scope);
     const [row] = await this.taskRows(tx, tx`
-      WHERE t.flow_id = ${reference.flowId}
+      WHERE t.organization_id = ${scope.organizationId}
+        AND t.flow_id = ${reference.flowId}
         AND t.subject_id = ${reference.subjectId}
         AND t.stage = ${reference.stage}
         AND t.role_key = ${reference.role}
@@ -109,20 +135,23 @@ export class PostgresTaskStore implements TaskStore {
     return row ? this.task(row, reference.namespace, reference.subjectType) : null;
   }
 
-  async applyProjection(input: { plan: TaskProjectionPlan; operationId: string }) {
-    return this.sql.begin((tx) => this.applyProjectionInTransaction(tx, input));
+  async applyProjection(scope: TenantScope, input: { plan: TaskProjectionPlan; operationId: string }) {
+    requireTenantScope(scope);
+    return this.sql.begin((tx) => this.applyProjectionInTransaction(scope, tx, input));
   }
 
-  async applyProjectionInTransaction(tx: TransactionSql, input: { plan: TaskProjectionPlan; operationId: string }) {
+  async applyProjectionInTransaction(scope: TenantScope, tx: TransactionSql, input: { plan: TaskProjectionPlan; operationId: string }) {
+    requireTenantScope(scope);
     const [claimedOperation] = await tx<{ operation_key: string }[]>`
-      INSERT INTO flow_task_projection_operations (operation_key, result)
-      VALUES (${input.operationId}, '{}'::jsonb)
-      ON CONFLICT (operation_key) DO NOTHING
+      INSERT INTO flow_task_projection_operations (organization_id, operation_key, result)
+      VALUES (${scope.organizationId}, ${input.operationId}, '{}'::jsonb)
+      ON CONFLICT (organization_id, operation_key) DO NOTHING
       RETURNING operation_key
     `;
     if (!claimedOperation) {
       const [prior] = await tx<ProjectionOperationRow[]>`
-        SELECT result FROM flow_task_projection_operations WHERE operation_key = ${input.operationId} LIMIT 1
+        SELECT result FROM flow_task_projection_operations
+        WHERE organization_id = ${scope.organizationId} AND operation_key = ${input.operationId} LIMIT 1
       `;
       const result = typeof prior?.result === 'string' ? JSON.parse(prior.result) : prior?.result;
       if (result) return { ...result, created: false };
@@ -134,7 +163,7 @@ export class PostgresTaskStore implements TaskStore {
     for (let index = 0; index < input.plan.mutations.length; index += 1) {
       const mutation = input.plan.mutations[index]!;
       const plannedEvent = input.plan.events[index];
-      const current = await this.findInTransaction(tx, mutation.reference);
+      const current = await this.findInTransaction(scope, tx, mutation.reference);
       const now = new Date().toISOString();
       const nextStatus = taskStatusAfter(mutation.kind, current?.status ?? null);
       const [row] = current
@@ -145,18 +174,18 @@ export class PostgresTaskStore implements TaskStore {
               revision = revision + 1,
               lifecycle_epoch = ${mutation.lifecycleEpoch},
               due_at = ${mutation.dueAt ?? current.dueAt}
-          WHERE id = ${current.id}
+          WHERE organization_id = ${scope.organizationId} AND id = ${current.id}
           RETURNING *, ${now}::timestamptz AS created_at, ${now}::timestamptz AS updated_at,
             CASE WHEN ${nextStatus} = 'claimed' THEN ${now}::timestamptz ELSE NULL END AS claimed_at,
             CASE WHEN ${nextStatus} = 'completed' THEN ${now}::timestamptz ELSE NULL END AS completed_at
         `
         : await tx<TaskRow[]>`
           INSERT INTO flow_tasks (
-            id, flow_id, subject_id, stage, role_key, status, assignee_id,
+            organization_id, id, flow_id, subject_id, stage, role_key, status, assignee_id,
             revision, lifecycle_epoch, due_at, opened_operation_key
           )
           VALUES (
-            ${`task-${randomUUID()}`}, ${mutation.reference.flowId}, ${mutation.reference.subjectId},
+            ${scope.organizationId}, ${`task-${randomUUID()}`}, ${mutation.reference.flowId}, ${mutation.reference.subjectId},
             ${mutation.reference.stage}, ${mutation.reference.role}, ${nextStatus}, NULL,
             0, ${mutation.lifecycleEpoch}, ${mutation.dueAt ?? null}, ${input.operationId}
           )
@@ -169,9 +198,9 @@ export class PostgresTaskStore implements TaskStore {
       tasks.push(task);
       if (!plannedEvent) continue;
       const [event] = await tx<EventRow[]>`
-        INSERT INTO flow_task_events (task_id, sequence, operation_key, event_type, actor_id)
-        VALUES (${row.id}, ${row.revision}, ${`${input.operationId}:${index}`}, ${plannedEvent.eventType}, ${plannedEvent.actorId})
-        ON CONFLICT (task_id, sequence) DO NOTHING
+        INSERT INTO flow_task_events (organization_id, task_id, sequence, operation_key, event_type, actor_id)
+        VALUES (${scope.organizationId}, ${row.id}, ${row.revision}, ${`${input.operationId}:${index}`}, ${plannedEvent.eventType}, ${plannedEvent.actorId})
+        ON CONFLICT (organization_id, task_id, sequence) DO NOTHING
         RETURNING *
       `;
       if (event) events.push(this.event(event, task));
@@ -180,76 +209,99 @@ export class PostgresTaskStore implements TaskStore {
     await tx`
       UPDATE flow_task_projection_operations
       SET result = ${jsonb(this.sql, result)}
-      WHERE operation_key = ${input.operationId}
+      WHERE organization_id = ${scope.organizationId} AND operation_key = ${input.operationId}
     `;
     return result;
   }
 
-  async claim(command: import('@naakwu/flowkit-tasks').TaskClaimCommand) {
+  async claim(scope: TenantScope, command: import('@naakwu/flowkit-tasks').TaskClaimCommand) {
+    requireTenantScope(scope);
     return this.sql.begin(async (tx) => {
       const [row] = await tx<TaskRow[]>`
       UPDATE flow_tasks
       SET status = 'claimed', assignee_id = ${command.actorId}, revision = revision + 1
-      WHERE id = ${command.taskId}
+      WHERE organization_id = ${scope.organizationId}
+        AND id = ${command.taskId}
         AND status = 'open'
         AND assignee_id IS NULL
         AND revision = ${command.expectedRevision}
       RETURNING *, ${command.now}::timestamptz AS created_at, ${command.now}::timestamptz AS updated_at,
         ${command.now}::timestamptz AS claimed_at, NULL::timestamptz AS completed_at
       `;
-      if (!row) return { task: null, reason: 'conflict' as const };
+      if (!row) {
+        const [visible] = await tx<{ id: string }[]>`
+          SELECT id FROM flow_tasks WHERE organization_id = ${scope.organizationId} AND id = ${command.taskId} LIMIT 1
+        `;
+        return { task: null, reason: visible ? 'conflict' as const : 'not_found' as const };
+      }
       const task = this.task(row);
-      await this.appendLifecycleEvent(tx, task, 'claimed', command.operationId, command.actorId, command.now);
+      await this.appendLifecycleEvent(scope, tx, task, 'claimed', command.operationId, command.actorId, command.now);
       return { task };
     });
   }
 
-  async release(command: TaskReleaseCommand) {
+  async release(scope: TenantScope, command: TaskReleaseCommand) {
+    requireTenantScope(scope);
     return this.sql.begin(async (tx) => {
       const [row] = await tx<TaskRow[]>`
       UPDATE flow_tasks
       SET status = 'open', assignee_id = NULL, revision = revision + 1
-      WHERE id = ${command.taskId}
+      WHERE organization_id = ${scope.organizationId}
+        AND id = ${command.taskId}
         AND status = 'claimed'
         AND assignee_id = ${command.actorId}
         AND revision = ${command.expectedRevision}
       RETURNING *, ${command.now}::timestamptz AS created_at, ${command.now}::timestamptz AS updated_at,
         NULL::timestamptz AS claimed_at, NULL::timestamptz AS completed_at
       `;
-      if (!row) return { task: null, reason: 'conflict' as const };
+      if (!row) {
+        const [visible] = await tx<{ id: string }[]>`
+          SELECT id FROM flow_tasks WHERE organization_id = ${scope.organizationId} AND id = ${command.taskId} LIMIT 1
+        `;
+        return { task: null, reason: visible ? 'conflict' as const : 'not_found' as const };
+      }
       const task = this.task(row);
-      await this.appendLifecycleEvent(tx, task, 'released', command.operationId, command.actorId, command.now);
+      await this.appendLifecycleEvent(scope, tx, task, 'released', command.operationId, command.actorId, command.now);
       return { task };
     });
   }
 
-  async reassign(command: TaskReassignCommand) {
+  async reassign(scope: TenantScope, command: TaskReassignCommand) {
+    requireTenantScope(scope);
     return this.sql.begin(async (tx) => {
       const [row] = await tx<TaskRow[]>`
       UPDATE flow_tasks
       SET status = 'claimed', assignee_id = ${command.targetActorId}, revision = revision + 1
-      WHERE id = ${command.taskId} AND revision = ${command.expectedRevision}
+      WHERE organization_id = ${scope.organizationId} AND id = ${command.taskId} AND revision = ${command.expectedRevision}
       RETURNING *, ${command.now}::timestamptz AS created_at, ${command.now}::timestamptz AS updated_at,
         ${command.now}::timestamptz AS claimed_at, NULL::timestamptz AS completed_at
       `;
-      if (!row) return { task: null, reason: 'conflict' as const };
+      if (!row) {
+        const [visible] = await tx<{ id: string }[]>`
+          SELECT id FROM flow_tasks WHERE organization_id = ${scope.organizationId} AND id = ${command.taskId} LIMIT 1
+        `;
+        return { task: null, reason: visible ? 'conflict' as const : 'not_found' as const };
+      }
       const task = this.task(row);
-      await this.appendLifecycleEvent(tx, task, 'reassigned', command.operationId, command.actorId, command.now);
+      await this.appendLifecycleEvent(scope, tx, task, 'reassigned', command.operationId, command.actorId, command.now);
       return { task };
     });
   }
 
-  async history(taskId: string): Promise<TaskEvent[]> {
-    const task = await this.get(taskId);
+  async history(scope: TenantScope, taskId: string): Promise<TaskEvent[]> {
+    requireTenantScope(scope);
+    const task = await this.get(scope, taskId);
     if (!task) return [];
     const rows = await this.sql<EventRow[]>`
-      SELECT * FROM flow_task_events WHERE task_id = ${taskId} ORDER BY sequence ASC
+      SELECT * FROM flow_task_events
+      WHERE organization_id = ${scope.organizationId} AND task_id = ${taskId} ORDER BY sequence ASC
     `;
     return rows.map((row) => this.event(row, task));
   }
 
-  async inbox(query: TaskInboxQuery): Promise<TaskInboxPage> {
-    const rows = await this.taskRows(this.sql, this.sql``);
+  async inbox(scope: TenantScope, query: TaskInboxQuery): Promise<TaskInboxPage> {
+    requireTenantScope(scope);
+    const rows = await this.taskRows(this.sql, this.sql`WHERE t.organization_id = ${scope.organizationId}`);
     let items = rows.map((row) => this.task(row));
     if (query.view === 'my_claims') items = items.filter((task) => task.assigneeId === query.actorId);
     if (query.view === 'role_queue') {
@@ -268,12 +320,14 @@ export class PostgresTaskStore implements TaskStore {
     return { items: items.slice(0, query.limit ?? 50), nextCursor: null };
   }
 
-  async latestMakerCompletion(input: { subjectType: string; subjectId: string; makerStage: string; beforeEpoch: number }): Promise<TaskEvent | null> {
+  async latestMakerCompletion(scope: TenantScope, input: { subjectType: string; subjectId: string; makerStage: string; beforeEpoch: number }): Promise<TaskEvent | null> {
+    requireTenantScope(scope);
     const rows = await this.sql<(EventRow & TaskRow)[]>`
       SELECT e.*, t.*
       FROM flow_task_events e
-      JOIN flow_tasks t ON t.id = e.task_id
-      WHERE t.subject_id = ${input.subjectId}
+      JOIN flow_tasks t ON t.organization_id = e.organization_id AND t.id = e.task_id
+      WHERE t.organization_id = ${scope.organizationId}
+        AND t.subject_id = ${input.subjectId}
         AND t.stage = ${input.makerStage}
         AND t.lifecycle_epoch <= ${input.beforeEpoch}
         AND e.event_type = 'completed'
@@ -284,56 +338,60 @@ export class PostgresTaskStore implements TaskStore {
     return row ? this.event(row, this.task(row, 'flowkit-demo', input.subjectType)) : null;
   }
 
-  async createInvitation(input: Omit<TaskInvitation, 'id' | 'status' | 'acceptedIdentityId' | 'acceptedAt'>): Promise<TaskInvitation> {
+  async createInvitation(scope: TenantScope, input: Omit<TaskInvitation, 'id' | 'status' | 'acceptedIdentityId' | 'acceptedAt'>): Promise<TaskInvitation> {
+    requireTenantScope(scope);
     const [inserted] = await this.sql<InvitationRow[]>`
       INSERT INTO flow_task_invitations (
-        id, task_id, subject_type, subject_id, role_key, contact_kind, contact_hash,
+        organization_id, id, task_id, subject_type, subject_id, role_key, contact_kind, contact_hash,
         contact_hash_key_version, token_hash, status, expires_at, source_key, metadata
       ) VALUES (
-        ${`invitation-${randomUUID()}`}, ${input.taskId}, ${input.subjectType}, ${input.subjectId}, ${input.role},
+        ${scope.organizationId}, ${`invitation-${randomUUID()}`}, ${input.taskId}, ${input.subjectType}, ${input.subjectId}, ${input.role},
         ${input.contactKind}, ${input.contactHash}, ${input.contactHashKeyVersion}, ${input.tokenHash}, 'pending',
         ${input.expiresAt}, ${input.sourceKey}, ${jsonb(this.sql, input.metadata ?? {})}
-      ) ON CONFLICT (source_key) DO NOTHING RETURNING *
+      ) ON CONFLICT (organization_id, source_key) DO NOTHING RETURNING *
     `;
     if (inserted) return this.invitation(inserted);
-    const [existing] = await this.sql<InvitationRow[]>`SELECT * FROM flow_task_invitations WHERE source_key = ${input.sourceKey} LIMIT 1`;
+    const [existing] = await this.sql<InvitationRow[]>`SELECT * FROM flow_task_invitations WHERE organization_id = ${scope.organizationId} AND source_key = ${input.sourceKey} LIMIT 1`;
     if (!existing) throw new Error(`Task invitation ${input.sourceKey} was not readable after conflict.`);
     return this.invitation(existing);
   }
 
-  async getInvitationByTokenHash(tokenHash: string): Promise<TaskInvitation | null> {
-    const [row] = await this.sql<InvitationRow[]>`SELECT * FROM flow_task_invitations WHERE token_hash = ${tokenHash} LIMIT 1`;
+  async getInvitationByTokenHash(scope: TenantScope, tokenHash: string): Promise<TaskInvitation | null> {
+    requireTenantScope(scope);
+    const [row] = await this.sql<InvitationRow[]>`SELECT * FROM flow_task_invitations WHERE organization_id = ${scope.organizationId} AND token_hash = ${tokenHash} LIMIT 1`;
     return row ? this.invitation(row) : null;
   }
 
-  async redeemInvitation(input: { invitationId: string; identityId: string; expectedExpiry: string; now: string; operationId: string }): Promise<{ invitation: TaskInvitation; task: FlowTask } | null> {
+  async redeemInvitation(scope: TenantScope, input: { invitationId: string; identityId: string; expectedExpiry: string; now: string; operationId: string }): Promise<{ invitation: TaskInvitation; task: FlowTask } | null> {
+    requireTenantScope(scope);
     return this.sql.begin(async (tx) => {
       const [invitation] = await tx<InvitationRow[]>`
         UPDATE flow_task_invitations
         SET status = 'accepted', accepted_identity_id = ${input.identityId}, accepted_at = ${input.now}
-        WHERE id = ${input.invitationId} AND status = 'pending'
+        WHERE organization_id = ${scope.organizationId} AND id = ${input.invitationId} AND status = 'pending'
           AND expires_at = ${input.expectedExpiry}::timestamptz AND expires_at >= ${input.now}::timestamptz
         RETURNING *
       `;
       if (!invitation) return null;
       const [row] = await tx<TaskRow[]>`
         UPDATE flow_tasks SET status = 'claimed', assignee_id = ${input.identityId}, revision = revision + 1
-        WHERE id = ${invitation.task_id} AND status = 'open'
+        WHERE organization_id = ${scope.organizationId} AND id = ${invitation.task_id} AND status = 'open'
         RETURNING *, ${input.now}::timestamptz AS created_at, ${input.now}::timestamptz AS updated_at,
           ${input.now}::timestamptz AS claimed_at, NULL::timestamptz AS completed_at
       `;
       if (!row) throw new Error('Task invitation could not claim an open task.');
       const task = this.task(row, 'flowkit-demo', invitation.subject_type);
-      await this.appendLifecycleEvent(tx, task, 'invitation_accepted', input.operationId, input.identityId, input.now);
+      await this.appendLifecycleEvent(scope, tx, task, 'invitation_accepted', input.operationId, input.identityId, input.now);
       return { invitation: this.invitation(invitation), task };
     });
   }
 
-  async revokeInvitation(input: { invitationId: string; now: string; operationId: string }): Promise<void> {
+  async revokeInvitation(scope: TenantScope, input: { invitationId: string; now: string; operationId: string }): Promise<void> {
+    requireTenantScope(scope);
     await this.sql`
       UPDATE flow_task_invitations
       SET status = 'revoked', revoked_at = ${input.now}
-      WHERE id = ${input.invitationId} AND status = 'pending'
+      WHERE organization_id = ${scope.organizationId} AND id = ${input.invitationId} AND status = 'pending'
     `;
   }
 
@@ -344,10 +402,10 @@ export class PostgresTaskStore implements TaskStore {
   private async taskRows(executor: Executor, where: ReturnType<Sql>): Promise<TaskRow[]> {
     return executor<TaskRow[]>`
       SELECT t.*,
-        COALESCE((SELECT min(e.created_at) FROM flow_task_events e WHERE e.task_id = t.id), now()) AS created_at,
-        COALESCE((SELECT max(e.created_at) FROM flow_task_events e WHERE e.task_id = t.id), now()) AS updated_at,
-        CASE WHEN t.status = 'claimed' THEN (SELECT max(e.created_at) FROM flow_task_events e WHERE e.task_id = t.id AND e.event_type IN ('claimed', 'reassigned', 'invitation_accepted')) ELSE NULL END AS claimed_at,
-        CASE WHEN t.status = 'completed' THEN (SELECT max(e.created_at) FROM flow_task_events e WHERE e.task_id = t.id AND e.event_type = 'completed') ELSE NULL END AS completed_at
+        COALESCE((SELECT min(e.created_at) FROM flow_task_events e WHERE e.organization_id = t.organization_id AND e.task_id = t.id), now()) AS created_at,
+        COALESCE((SELECT max(e.created_at) FROM flow_task_events e WHERE e.organization_id = t.organization_id AND e.task_id = t.id), now()) AS updated_at,
+        CASE WHEN t.status = 'claimed' THEN (SELECT max(e.created_at) FROM flow_task_events e WHERE e.organization_id = t.organization_id AND e.task_id = t.id AND e.event_type IN ('claimed', 'reassigned', 'invitation_accepted')) ELSE NULL END AS claimed_at,
+        CASE WHEN t.status = 'completed' THEN (SELECT max(e.created_at) FROM flow_task_events e WHERE e.organization_id = t.organization_id AND e.task_id = t.id AND e.event_type = 'completed') ELSE NULL END AS completed_at
       FROM flow_tasks t ${where}
     `;
   }
@@ -383,11 +441,11 @@ export class PostgresTaskStore implements TaskStore {
     };
   }
 
-  private async appendLifecycleEvent(executor: Executor, task: FlowTask, eventType: TaskEventType, operationId: string, actorId: string, now: string): Promise<void> {
+  private async appendLifecycleEvent(scope: TenantScope, executor: Executor, task: FlowTask, eventType: TaskEventType, operationId: string, actorId: string, now: string): Promise<void> {
     await executor`
-      INSERT INTO flow_task_events (task_id, sequence, operation_key, event_type, actor_id, created_at)
-      VALUES (${task.id}, ${task.revision}, ${operationId}, ${eventType}, ${actorId}, ${now})
-      ON CONFLICT (task_id, sequence) DO NOTHING
+      INSERT INTO flow_task_events (organization_id, task_id, sequence, operation_key, event_type, actor_id, created_at)
+      VALUES (${scope.organizationId}, ${task.id}, ${task.revision}, ${operationId}, ${eventType}, ${actorId}, ${now})
+      ON CONFLICT (organization_id, task_id, sequence) DO NOTHING
     `;
   }
 }

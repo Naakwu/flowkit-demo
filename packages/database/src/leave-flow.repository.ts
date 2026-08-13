@@ -11,8 +11,10 @@ import { createDemoDatabaseClient } from './client';
 import { jsonb } from './jsonb';
 import { PostgresOutboxStore } from './postgres-outbox-store';
 import { PostgresTaskStore } from './postgres-task-store';
+import { requireTenantScope, type TenantScope } from './tenant-scope';
 
 export type LeaveRequestRow = {
+  organization_id: string;
   id: string;
   flow_id: string;
   employee_id: string;
@@ -75,53 +77,59 @@ export class LeaveFlowRepository {
     this.adapters.freeze();
   }
 
-  async findPriorResult(workflowId: string, operationId: string): Promise<RecordTransitionOutput | undefined> {
+  async findPriorResult(scope: TenantScope, workflowId: string, operationId: string): Promise<RecordTransitionOutput | undefined> {
+    requireTenantScope(scope);
     const [row] = await this.sql<PriorTransitionRow[]>`
       SELECT a.metadata
       FROM leave_transitions t
-      JOIN audit_events a ON a.action = 'flowkit.transition' AND a.metadata->>'operationId' = t.operation_key
-      WHERE t.operation_key = ${scopeOperationId(workflowId, operationId)}
+      JOIN audit_events a ON a.organization_id = t.organization_id
+        AND a.action = 'flowkit.transition' AND a.metadata->>'operationId' = t.operation_key
+      WHERE t.organization_id = ${scope.organizationId}
+        AND t.operation_key = ${scopeOperationId(workflowId, operationId)}
       LIMIT 1
     `;
     const metadata = typeof row?.metadata === 'string' ? JSON.parse(row.metadata) : row?.metadata;
     return metadata?.nextState ? { state: metadata.nextState, created: false } : undefined;
   }
 
-  async createRequest(input: { id: string; flowId: string; request: LeaveRequest; operationId: string; definitionHash: `sha256:${string}` }): Promise<void> {
+  async createRequest(scope: TenantScope, input: { id: string; flowId: string; request: LeaveRequest; operationId: string; definitionHash: `sha256:${string}` }): Promise<void> {
+    requireTenantScope(scope);
     const state = buildInitialState(this.definition);
     const operationKey = scopeOperationId(input.flowId, input.operationId);
     await this.sql.begin(async (tx) => {
       await tx`
         INSERT INTO leave_requests (
-          id, employee_id, manager_id, start_date, end_date, business_days, reason,
+          organization_id, id, employee_id, manager_id, start_date, end_date, business_days, reason,
           balance_days, stage, revision, operation_key, flow_id, definition_hash
         ) VALUES (
-          ${input.id}, ${input.request.employeeId}, ${input.request.managerId}, ${input.request.startDate},
+          ${scope.organizationId}, ${input.id}, ${input.request.employeeId}, ${input.request.managerId}, ${input.request.startDate},
           ${input.request.endDate}, ${input.request.businessDays}, ${input.request.reason},
           ${input.request.balanceDays}, ${state.stage}, 0, ${operationKey}, ${input.flowId}, ${input.definitionHash}
         )
-        ON CONFLICT (id) DO NOTHING
+        ON CONFLICT (organization_id, operation_key) DO NOTHING
       `;
       const plan = planTaskProjection({
         namespace: 'flowkit-demo', flowId: input.flowId, subject: { type: 'leave', id: input.id },
         definition: this.definition, operationId: operationKey, transitionSequence: 0,
         action: 'open', actorId: input.request.employeeId, previousState: state, nextState: state, metadata: {},
       }, null);
-      await this.tasks.applyProjectionInTransaction(tx, { plan, operationId: operationKey });
+      await this.tasks.applyProjectionInTransaction(scope, tx, { plan, operationId: operationKey });
     });
   }
 
-  async getRequest(id: string): Promise<LeaveRequestRow | null> {
+  async getRequest(scope: TenantScope, id: string): Promise<LeaveRequestRow | null> {
+    requireTenantScope(scope);
     const [row] = await this.sql<LeaveRequestRow[]>`
-      SELECT id, flow_id, employee_id, manager_id, start_date, end_date, business_days, reason, balance_days, stage, revision, definition_hash
+      SELECT organization_id, id, flow_id, employee_id, manager_id, start_date, end_date, business_days, reason, balance_days, stage, revision, definition_hash
       FROM leave_requests
-      WHERE id = ${id}
+      WHERE organization_id = ${scope.organizationId} AND id = ${id}
       LIMIT 1
     `;
     return row ?? null;
   }
 
-  async listActivities(leaveId: string): Promise<LeaveActivity[]> {
+  async listActivities(scope: TenantScope, leaveId: string): Promise<LeaveActivity[]> {
+    requireTenantScope(scope);
     const rows = await this.sql<Array<{
       actor_id: string;
       action: string;
@@ -131,7 +139,7 @@ export class LeaveFlowRepository {
     }>>`
       SELECT actor_id, action, from_stage, to_stage, created_at
       FROM leave_transitions
-      WHERE leave_id = ${leaveId}
+      WHERE organization_id = ${scope.organizationId} AND leave_id = ${leaveId}
       ORDER BY sequence ASC, id ASC
     `;
     return rows.map((row) => ({
@@ -143,11 +151,12 @@ export class LeaveFlowRepository {
     }));
   }
 
-  async recordStageReady(input: RecordStageReadyInput): Promise<void> {
+  async recordStageReady(scope: TenantScope, input: RecordStageReadyInput): Promise<void> {
+    requireTenantScope(scope);
     await this.sql`
       INSERT INTO demo_runtime_state (state_key, state_value, updated_at)
       VALUES (
-        ${`leave-stage-ready:${input.workflowId}`},
+        ${`leave-stage-ready:${scope.organizationId}:${input.workflowId}`},
         ${jsonb(this.sql, { stage: input.state.stage, entryEpoch: input.entryEpoch, slaDeadline: input.slaDeadline ?? null })},
         now()
       )
@@ -156,13 +165,14 @@ export class LeaveFlowRepository {
     `;
   }
 
-  async dispatchNotification(input: DispatchNotificationInput): Promise<void> {
-    const request = await this.getRequest(input.subject.id);
+  async dispatchNotification(scope: TenantScope, input: DispatchNotificationInput): Promise<void> {
+    requireTenantScope(scope);
+    const request = await this.getRequest(scope, input.subject.id);
     if (!request) throw new Error('leave_not_found');
     const notification = input.notification.template === 'manager'
       ? { template: 'leave.overdue', channels: ['inbox', 'email'], to: ['manager'] }
       : input.notification;
-    await this.outbox.insert(await this.notificationEnvelopes({
+    await this.outbox.insert(scope, await this.notificationEnvelopes({
       workflowId: input.subject.id,
       runId: 'notification',
       operationId: input.operationKey,
@@ -182,26 +192,27 @@ export class LeaveFlowRepository {
     }, request));
   }
 
-  async recordTransition(input: RecordTransitionInput): Promise<RecordTransitionOutput> {
+  async recordTransition(scope: TenantScope, input: RecordTransitionInput): Promise<RecordTransitionOutput> {
+    requireTenantScope(scope);
     const operationKey = scopeOperationId(input.workflowId, input.operationId);
     return this.sql.begin(async (tx) => {
-      const existing = await this.findPriorResultInTransaction(tx, operationKey);
+      const existing = await this.findPriorResultInTransaction(scope, tx, operationKey);
       if (existing) return existing;
 
-      const advanced = await this.advanceRequest(tx, input);
+      const advanced = await this.advanceRequest(scope, tx, input);
       if ('prior' in advanced) return advanced.prior;
       const request = advanced.request;
       await tx`
-        INSERT INTO leave_transitions (leave_id, sequence, operation_key, action, actor_id, from_stage, to_stage, run_key)
+        INSERT INTO leave_transitions (organization_id, leave_id, sequence, operation_key, action, actor_id, from_stage, to_stage, run_key)
         VALUES (
-          ${input.subject.id}, ${input.sequence}, ${operationKey}, ${input.command.action},
+          ${scope.organizationId}, ${input.subject.id}, ${input.sequence}, ${operationKey}, ${input.command.action},
           ${input.command.actorId ?? 'system'}, ${input.previousState.stage}, ${input.nextState.stage}, ${input.runId}
         )
       `;
       await tx`
-        INSERT INTO audit_events (actor_id, action, entity_id, metadata)
+        INSERT INTO audit_events (organization_id, actor_id, action, entity_id, metadata)
         VALUES (
-          ${input.command.actorId ?? 'system'}, 'flowkit.transition', ${input.subject.id},
+          ${scope.organizationId}, ${input.command.actorId ?? 'system'}, 'flowkit.transition', ${input.subject.id},
           ${jsonb(this.sql, {
             workflowId: input.workflowId, runId: input.runId, operationId: operationKey,
             previousState: input.previousState, nextState: input.nextState,
@@ -210,7 +221,7 @@ export class LeaveFlowRepository {
         )
       `;
       const previousRole = input.previousState.pendingRole;
-      const current = previousRole ? await this.tasks.findInTransaction(tx, {
+      const current = previousRole ? await this.tasks.findInTransaction(scope, tx, {
         namespace: 'flowkit-demo', flowId: input.workflowId, subjectType: 'leave', subjectId: input.subject.id,
         stage: input.previousState.stage, role: previousRole,
       }) : null;
@@ -220,8 +231,8 @@ export class LeaveFlowRepository {
         action: input.command.action, actorId: input.command.actorId ?? null,
         previousState: input.previousState, nextState: input.nextState, metadata: {},
       }, current);
-      await this.tasks.applyProjectionInTransaction(tx, { plan: taskPlan, operationId: operationKey });
-      await this.outbox.insertInTransaction(await this.notificationEnvelopes(input, request), tx);
+      await this.tasks.applyProjectionInTransaction(scope, tx, { plan: taskPlan, operationId: operationKey });
+      await this.outbox.insertInTransaction(scope, await this.notificationEnvelopes(input, request), tx);
       return { state: input.nextState, created: true };
     });
   }
@@ -230,30 +241,32 @@ export class LeaveFlowRepository {
     if (this.ownsClient) await this.sql.end({ timeout: 5 });
   }
 
-  private async findPriorResultInTransaction(tx: TransactionSql, operationKey: string): Promise<RecordTransitionOutput | undefined> {
+  private async findPriorResultInTransaction(scope: TenantScope, tx: TransactionSql, operationKey: string): Promise<RecordTransitionOutput | undefined> {
     const [row] = await tx<PriorTransitionRow[]>`
       SELECT a.metadata
       FROM leave_transitions t
-      JOIN audit_events a ON a.action = 'flowkit.transition' AND a.metadata->>'operationId' = t.operation_key
-      WHERE t.operation_key = ${operationKey}
+      JOIN audit_events a ON a.organization_id = t.organization_id
+        AND a.action = 'flowkit.transition' AND a.metadata->>'operationId' = t.operation_key
+      WHERE t.organization_id = ${scope.organizationId} AND t.operation_key = ${operationKey}
       LIMIT 1
     `;
     const metadata = typeof row?.metadata === 'string' ? JSON.parse(row.metadata) : row?.metadata;
     return metadata?.nextState ? { state: metadata.nextState, created: false } : undefined;
   }
 
-  private async advanceRequest(tx: TransactionSql, input: RecordTransitionInput): Promise<{ request: LeaveRequestRow } | { prior: RecordTransitionOutput }> {
+  private async advanceRequest(scope: TenantScope, tx: TransactionSql, input: RecordTransitionInput): Promise<{ request: LeaveRequestRow } | { prior: RecordTransitionOutput }> {
     const [request] = await tx<LeaveRequestRow[]>`
       UPDATE leave_requests
       SET stage = ${input.nextState.stage}, revision = revision + 1,
           flow_id = COALESCE(flow_id, ${input.workflowId}), definition_hash = ${input.definition.hash}
-      WHERE id = ${input.subject.id}
+      WHERE organization_id = ${scope.organizationId}
+        AND id = ${input.subject.id}
         AND stage = ${input.previousState.stage}
         AND revision = ${input.sequence - 1}
-      RETURNING id, employee_id, manager_id, stage, revision
+      RETURNING organization_id, id, employee_id, manager_id, stage, revision
     `;
     if (request) return { request };
-    const duplicate = await this.findPriorResultInTransaction(tx, scopeOperationId(input.workflowId, input.operationId));
+    const duplicate = await this.findPriorResultInTransaction(scope, tx, scopeOperationId(input.workflowId, input.operationId));
     if (duplicate) return { prior: duplicate };
     throw new LeaveFlowProjectionConflictError(input.workflowId, input.previousState.stage);
   }

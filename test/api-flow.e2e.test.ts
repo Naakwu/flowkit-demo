@@ -49,14 +49,14 @@ class FakeConsumer {
   private readonly states = new Map<string, string>();
   private task: any = null;
   readonly repository = {
-    getRequest: async (id: string) => this.requests.get(id) ?? null,
+    getRequest: async (_scope: unknown, id: string) => this.requests.get(id) ?? null,
     listActivities: async () => [],
     tasks: {
-      get: async (id: string) => this.task?.id === id ? this.task : null,
+      get: async (_scope: unknown, id: string) => this.task?.id === id ? this.task : null,
       find: async () => this.task,
     },
   };
-  readonly tasks = {
+  private readonly scopedTasks = {
     list: async ({ actor }: any) => {
       const request = this.task ? this.requests.get(this.task.subjectId) : null;
       const visible = this.task && (
@@ -76,18 +76,20 @@ class FakeConsumer {
   readonly outbox = { listForRecipient: async () => [] };
   readonly inbox = { forUser: async () => [] };
 
-  async start(input: any) {
-    this.requests.set(input.subject.id, { id: input.subject.id, flow_id: input.flowId, employee_id: input.actor.id, manager_id: input.subject.metadata.managerId, definition_hash: 'sha256:demo' });
+  tasks() { return this.scopedTasks; }
+
+  async start(scope: { organizationId: string }, input: any) {
+    this.requests.set(input.subject.id, { organization_id: scope.organizationId, id: input.subject.id, flow_id: input.flowId, employee_id: input.actor.id, manager_id: input.subject.metadata.managerId, definition_hash: 'sha256:demo' });
     this.states.set(input.flowId, 'employee_draft');
     return this.view(input.flowId);
   }
 
-  async getFlow(flowId: string) {
+  async getFlow(_scope: unknown, flowId: string) {
     if (!this.states.has(flowId)) throw new Error('flow_not_found');
     return this.view(flowId);
   }
 
-  async act(input: any) {
+  async act(_scope: unknown, input: any) {
     if (input.action === 'submit') {
       this.states.set(input.flowId, 'manager_review');
       const request = [...this.requests.values()].find((item) => item.flow_id === input.flowId)!;

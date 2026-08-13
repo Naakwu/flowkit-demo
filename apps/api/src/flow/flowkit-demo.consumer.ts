@@ -14,6 +14,7 @@ import { LeaveFlowRepository } from '@flowkit-demo/database';
 import { leaveDefinition } from '@flowkit-demo/domain';
 import { leaveRequestSchema, type LeaveRequest } from '@flowkit-demo/domain';
 import { PostgresInboxAdapter } from '@flowkit-demo/database';
+import type { TenantScope } from '@flowkit-demo/database';
 import { leaveRuntime } from './temporal.client';
 
 export const publishedLeaveDefinition = publishDefinition({ definition: leaveDefinition });
@@ -31,61 +32,76 @@ export type LeaveFlowSubject = FlowkitConsumerStart['subject'] & { metadata: Lea
  * The demo's only Flowkit composition root. HTTP adapters use this facade and
  * never calculate a transition or alter workflow state themselves.
  */
-export class FlowkitDemoConsumer implements FlowkitConsumer {
+export class FlowkitDemoConsumer {
   readonly repository: LeaveFlowRepository;
-  readonly tasks: FlowkitConsumer['tasks'];
   readonly outbox;
   readonly inbox: PostgresInboxAdapter;
-  private readonly consumer: FlowkitConsumer;
   private readonly actorResolver: FlowkitActorResolver;
+  private readonly runtime: FlowRuntime;
+  private readonly now: () => string;
 
   constructor(dependencies: FlowkitDemoConsumerDependencies = {}) {
     this.repository = dependencies.repository ?? new LeaveFlowRepository();
     this.outbox = this.repository.outbox;
     this.inbox = new PostgresInboxAdapter(this.repository.sql);
     this.actorResolver = dependencies.actorResolver ?? { resolve: resolveDemoActor };
-    const runtime = dependencies.runtime ?? leaveRuntime;
-    const now = dependencies.now ?? (() => new Date().toISOString());
-    this.consumer = createFlowkitConsumer({
+    this.runtime = dependencies.runtime ?? leaveRuntime;
+    this.now = dependencies.now ?? (() => new Date().toISOString());
+  }
+
+  private consumer(scope: TenantScope): FlowkitConsumer {
+    return createFlowkitConsumer({
       definition: publishedLeaveDefinition,
-      runtime,
-      tasks: this.repository.tasks,
+      runtime: this.runtime,
+      tasks: this.repository.tasks.forOrganization(scope),
       actorResolver: this.actorResolver,
       eligibility: {
         canWorkRole: async ({ actorId, role, task }) => {
           const actor = await this.actorResolver.resolve(actorId);
           if (!actor.roles.includes(role)) return false;
           if (task.subjectType !== 'leave' || role !== 'manager') return true;
-          const request = await this.repository.getRequest(task.subjectId);
+          const request = await this.repository.getRequest(scope, task.subjectId);
           return request?.manager_id === actor.id;
         },
       },
-      clock: { now },
+      clock: { now: this.now },
       views: {
         read: (state) => state,
-        readByFlowId: async (flowId) => runtime.get({ flowId }),
+        readByFlowId: async (flowId) => this.runtime.get({ flowId }),
       },
     });
-    this.tasks = this.consumer.tasks;
   }
 
-  async start(input: FlowkitConsumerStart) {
+  tasks(scope: TenantScope): FlowkitConsumer['tasks'] {
+    return this.consumer(scope).tasks;
+  }
+
+  async start(scope: TenantScope, input: FlowkitConsumerStart) {
     const actor = await this.actorResolver.resolve(input.actor.id);
     const request = leaveRequestSchema.parse({ ...(input.subject.metadata ?? {}), employeeId: actor.id });
     if (!actor.roles.includes('employee') || request.employeeId !== actor.id) throw new Error('employee_not_authorized');
-    await this.repository.createRequest({
+    await this.repository.createRequest(scope, {
       id: input.subject.id,
       flowId: input.flowId,
       request,
       operationId: input.operationId,
       definitionHash: publishedLeaveDefinition.definitionHash,
     });
-    const view = await this.consumer.start({ ...input, actor, subject: { id: input.subject.id, metadata: request } });
+    const view = await this.consumer(scope).start({
+      ...input,
+      actor: { ...actor, organizationId: scope.organizationId },
+      subject: { id: input.subject.id, metadata: { ...request, organizationId: scope.organizationId } },
+    });
     return { id: input.flowId, ...view };
   }
 
-  act: FlowkitConsumer['act'] = (input) => this.consumer.act(input);
-  getFlow: FlowkitConsumer['getFlow'] = (flowId) => this.consumer.getFlow(flowId);
+  act(scope: TenantScope, input: Parameters<FlowkitConsumer['act']>[0]) {
+    return this.consumer(scope).act({ ...input, actor: { ...input.actor, organizationId: scope.organizationId } });
+  }
+
+  getFlow(scope: TenantScope, flowId: string) {
+    return this.consumer(scope).getFlow(flowId);
+  }
 }
 
 export function createFlowkitDemoConsumer(dependencies: FlowkitDemoConsumerDependencies = {}) {

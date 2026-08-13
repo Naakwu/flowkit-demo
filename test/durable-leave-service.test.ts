@@ -29,6 +29,6 @@ durableTests('durable LeaveService composition', () => {
     const leave = await durable.create({ managerId: 'manager-1', startDate: '2026-08-03', endDate: '2026-08-03', businessDays: 1, reason: 'Durable API', balanceDays: 10 }, 'employee-1');
     await durable.command(leave.id, { action: 'submit' }, { id: 'employee-1', roles: ['employee'] });
     expect((await durable.get(leave.id))?.state.stage).toBe('policy_evaluation');
-    expect((await durable.outbox.claimDue('notify-1', new Date(), 60_000, 10)).length).toBeGreaterThan(0);
+    expect((await durable.outbox.claimDue(durable.scope, 'notify-1', new Date(), 60_000, 10)).length).toBeGreaterThan(0);
   });
 });

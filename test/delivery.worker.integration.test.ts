@@ -52,6 +52,7 @@ describe('Mailpit SMTP adapter', () => {
 
 const sql = await durableTestDatabase('delivery worker', ['notification_outbox', 'notification_inbox', 'demo_runtime_state']);
 const durableTests = sql ? describe : describe.skip;
+const scope = { organizationId: 'acme-demo' };
 
 afterEach(async () => {
   if (!sql) return;
@@ -66,37 +67,37 @@ durableTests('delivery worker', () => {
     const outbox = new PostgresOutboxStore(sql!);
     const inbox = new PostgresInboxAdapter(sql!);
     const smtp = new RecordingSmtpTransport();
-    const adapters = createDeliveryAdapters({ inbox, smtp: new MailpitSmtpAdapter({ transport: smtp }) });
+    const adapters = createDeliveryAdapters({ inbox: inbox.forOrganization(scope), smtp: new MailpitSmtpAdapter({ transport: smtp }) });
     const health = new RuntimeHealthRepository(sql!);
 
-    await outbox.insert(approvedLeaveEnvelopes);
-    const result = await runDeliveryCycle({ owner: 'notify-test', outbox, adapters, health });
+    await outbox.insert(scope, approvedLeaveEnvelopes);
+    const result = await runDeliveryCycle({ scope, owner: 'notify-test', outbox, adapters, health });
 
     expect(result.claimed).toBe(2);
-    expect(await inbox.forUser('employee-1')).toHaveLength(1);
+    expect(await inbox.forUser(scope, 'employee-1')).toHaveLength(1);
     expect(smtp.sent).toHaveLength(1);
     expect((await health.health('delivery-worker')).ready).toBe(true);
   });
 
   it('does not resend email after a worker lease expires before its receipt is recorded', async () => {
     const outbox = new PostgresOutboxStore(sql!);
-    await outbox.insert([approvedLeaveEnvelopes[1]!]);
-    const [claimed] = await outbox.claimDue('crashed-worker', new Date(), 1, 1);
+    await outbox.insert(scope, [approvedLeaveEnvelopes[1]!]);
+    const [claimed] = await outbox.claimDue(scope, 'crashed-worker', new Date(), 1, 1);
     expect(claimed).toBeDefined();
 
-    await outbox.recoverExpired(new Date(claimed!.leaseExpiresAt.getTime() + 1));
-    expect(await readDelivery(sql!, claimed!.id)).toMatchObject({
+    await outbox.recoverExpired(scope, new Date(claimed!.leaseExpiresAt.getTime() + 1));
+    expect(await readDelivery(scope, sql!, claimed!.id)).toMatchObject({
       status: 'reconciliation_required',
       lastErrorCode: 'LEASE_EXPIRED',
     });
 
     const smtp = new RecordingSmtpTransport();
     const adapters = createDeliveryAdapters({
-      inbox: new PostgresInboxAdapter(sql!),
+      inbox: new PostgresInboxAdapter(sql!).forOrganization(scope),
       smtp: new MailpitSmtpAdapter({ transport: smtp }),
     });
     const result = await runDeliveryCycle({
-      owner: 'replacement-worker', outbox, adapters, health: new RuntimeHealthRepository(sql!),
+      scope, owner: 'replacement-worker', outbox, adapters, health: new RuntimeHealthRepository(sql!),
     });
     expect(result.claimed).toBe(0);
     expect(smtp.sent).toHaveLength(0);
@@ -104,12 +105,12 @@ durableTests('delivery worker', () => {
 
   it('lists the newest durable inbox notification first', async () => {
     await sql!`
-      INSERT INTO notification_inbox (id, user_id, dedupe_key, subject, body, delivered_at)
+      INSERT INTO notification_inbox (organization_id, id, user_id, dedupe_key, subject, body, delivered_at)
       VALUES
-        ('inbox-old', 'employee-1', 'inbox-order-old', 'Older', 'Older notification', '2026-07-29T10:00:00.000Z'),
-        ('inbox-new', 'employee-1', 'inbox-order-new', 'Newer', 'Newer notification', '2026-07-29T11:00:00.000Z')
+        (${scope.organizationId}, 'inbox-old', 'employee-1', 'inbox-order-old', 'Older', 'Older notification', '2026-07-29T10:00:00.000Z'),
+        (${scope.organizationId}, 'inbox-new', 'employee-1', 'inbox-order-new', 'Newer', 'Newer notification', '2026-07-29T11:00:00.000Z')
     `;
     const inbox = new PostgresInboxAdapter(sql!);
-    expect((await inbox.forUser('employee-1')).map((notification) => notification.id)).toEqual(['inbox-new', 'inbox-old']);
+    expect((await inbox.forUser(scope, 'employee-1')).map((notification) => notification.id)).toEqual(['inbox-new', 'inbox-old']);
   });
 });

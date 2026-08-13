@@ -14,6 +14,7 @@ const envelope: NotificationDeliveryEnvelope = {
 
 const sql = await durableTestDatabase('PostgresOutboxStore', ['notification_outbox']);
 const durableTests = sql ? describe : describe.skip;
+const scope = { organizationId: 'acme-demo' };
 afterEach(async () => { if (sql) await sql`DELETE FROM notification_outbox`; });
 afterAll(async () => { if (sql) await sql.end({ timeout: 5 }); });
 
@@ -21,10 +22,10 @@ durableTests('PostgresOutboxStore', () => {
   it('leases and completes an outbox envelope exactly once', async () => {
     const client = sql!;
     const outbox = new PostgresOutboxStore(client);
-    await outbox.insert([envelope]);
-    const [claimed] = await outbox.claimDue('notify-1', new Date(), 60_000, 10);
+    await outbox.insert(scope, [envelope]);
+    const [claimed] = await outbox.claimDue(scope, 'notify-1', new Date(), 60_000, 10);
     expect(claimed).toBeDefined();
-    await outbox.recordDelivered({ id: claimed!.id, owner: 'notify-1', providerMessageId: 'mail-1' });
-    expect(await readDelivery(client, claimed!.id)).toMatchObject({ status: 'delivered', providerMessageId: 'mail-1' });
+    await outbox.recordDelivered(scope, { id: claimed!.id, owner: 'notify-1', providerMessageId: 'mail-1' });
+    expect(await readDelivery(scope, client, claimed!.id)).toMatchObject({ status: 'delivered', providerMessageId: 'mail-1' });
   });
 });
