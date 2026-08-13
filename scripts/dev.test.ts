@@ -49,4 +49,23 @@ describe('validatePackageRegistryConfig', () => {
       expect(String(error)).not.toContain(token);
     }
   });
+
+  it.each([
+    `${safeNpmrc}@naakwu:registry=https://registry.npmjs.org\n`,
+    `${safeNpmrc}//npm.pkg.github.com/:_authToken=inline-secret\n`,
+    `${safeNpmrc}always-auth=false\n`,
+    `${safeNpmrc}@naakwu:registry=https://npm.pkg.github.com\n`,
+  ])('rejects duplicate or conflicting security settings', (npmrc) => {
+    expect(() => validatePackageRegistryConfig({
+      npmrc,
+      environment: { NODE_AUTH_TOKEN: 'valid-token' },
+    })).toThrow('exactly once');
+  });
+
+  it('rejects an unrelated inline auth token assignment', () => {
+    expect(() => validatePackageRegistryConfig({
+      npmrc: `${safeNpmrc}//registry.npmjs.org/:_authToken=inline-secret\n`,
+      environment: { NODE_AUTH_TOKEN: 'valid-token' },
+    })).toThrow('Inline package registry tokens are forbidden');
+  });
 });

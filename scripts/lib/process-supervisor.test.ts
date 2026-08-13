@@ -6,6 +6,7 @@ import {
   type ChildProcessHandle,
   type ProcessSignal,
   superviseProcesses,
+  spawnRedactedChild,
 } from './process-supervisor';
 
 class ControlledChild implements ChildProcessHandle {
@@ -39,6 +40,7 @@ function deferred<T>() {
 describe('superviseProcesses', () => {
   it('times out an unhealthy dependency before starting children', async () => {
     const starts: string[] = [];
+    let now = 0;
 
     const code = await superviseProcesses({
       dependencies: [{ name: 'postgres', check: async () => false }],
@@ -50,6 +52,7 @@ describe('superviseProcesses', () => {
         return new ControlledChild(spec.name);
       },
       sleep: async () => {},
+      now: () => ++now,
     });
 
     expect(code).toBe(EXIT_DEPENDENCY_TIMEOUT);
@@ -161,5 +164,45 @@ describe('superviseProcesses', () => {
     expect(messages.join('\n')).not.toContain('registry-token');
     expect(messages.join('\n')).not.toContain('cookie-value');
     expect(messages.join('\n')).toContain('[REDACTED]');
+  });
+
+  it('redacts secret values emitted by a real spawned process', async () => {
+    const output: string[] = [];
+    const secret = 'spawned-process-secret';
+    const child = spawnRedactedChild({
+      name: 'leaky',
+      command: ['bun', '-e', `console.log('${secret}'); console.error('postgresql://u:${secret}@localhost/db')`],
+      env: { API_TOKEN: secret },
+    }, (text) => output.push(text), (text) => output.push(text));
+
+    expect(await child.exited).toBe(0);
+    expect(output.join('')).not.toContain(secret);
+    expect(output.join('')).toContain('[REDACTED]');
+  });
+
+  it('does not propagate package credentials to a real spawned process', async () => {
+    const output: string[] = [];
+    const secret = 'registry-credential';
+    const child = spawnRedactedChild({
+      name: 'environment-probe',
+      command: ['bun', '-e', 'console.log(process.env.NODE_AUTH_TOKEN ?? "credential-absent")'],
+      env: { NODE_AUTH_TOKEN: secret },
+    }, (text) => output.push(text), (text) => output.push(text));
+
+    expect(await child.exited).toBe(0);
+    expect(output.join('')).toContain('credential-absent');
+    expect(output.join('')).not.toContain(secret);
+  });
+
+  it('bounds a hung dependency check by the declared monotonic deadline', async () => {
+    const started = performance.now();
+    const code = await superviseProcesses({
+      dependencies: [{ name: 'hung', check: () => new Promise(() => {}) }],
+      children: [],
+      dependencyTimeoutMs: 10,
+    });
+
+    expect(code).toBe(EXIT_DEPENDENCY_TIMEOUT);
+    expect(performance.now() - started).toBeLessThan(100);
   });
 });

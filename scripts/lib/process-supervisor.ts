@@ -31,20 +31,62 @@ export interface SupervisorOptions {
   termination?: Promise<'SIGINT' | 'SIGTERM'>;
   log?: (message: string) => void;
   onStarted?: () => void;
+  now?: () => number;
 }
 
 const SENSITIVE_ENV_KEY = /(TOKEN|SECRET|PASSWORD|COOKIE)/i;
 
-function defaultSpawn(spec: ChildProcessSpec): ChildProcessHandle {
+const PACKAGE_CREDENTIAL_KEY = /^(NODE_AUTH_TOKEN|NPM_TOKEN|BUN_AUTH_TOKEN|NPM_CONFIG__AUTH|NPM_CONFIG__AUTHTOKEN)$/i;
+
+export function withoutPackageCredentials(environment: Record<string, string | undefined>): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(environment).filter(([key]) => !PACKAGE_CREDENTIAL_KEY.test(key)));
+}
+
+async function pumpRedacted(
+  stream: ReadableStream<Uint8Array>,
+  environments: readonly (Record<string, string | undefined> | undefined)[],
+  write: (text: string) => void,
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffered += decoder.decode(value, { stream: !done });
+      let newline = buffered.indexOf('\n');
+      while (newline >= 0) {
+        write(redactSensitive(buffered.slice(0, newline + 1), environments));
+        buffered = buffered.slice(newline + 1);
+        newline = buffered.indexOf('\n');
+      }
+      if (done) break;
+    }
+    if (buffered) write(redactSensitive(buffered, environments));
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export function spawnRedactedChild(
+  spec: ChildProcessSpec,
+  stdout: (text: string) => void = (text) => process.stdout.write(text),
+  stderr: (text: string) => void = (text) => process.stderr.write(text),
+): ChildProcessHandle {
+  const environment = withoutPackageCredentials({ ...process.env, ...spec.env });
   const child = Bun.spawn([...spec.command], {
     cwd: spec.cwd,
-    env: { ...process.env, ...spec.env },
+    env: environment,
     stdin: 'inherit',
-    stdout: 'inherit',
-    stderr: 'inherit',
+    stdout: 'pipe',
+    stderr: 'pipe',
   });
+  const output = Promise.all([
+    pumpRedacted(child.stdout, [environment], stdout),
+    pumpRedacted(child.stderr, [environment], stderr),
+  ]);
   return {
-    exited: child.exited,
+    exited: Promise.all([child.exited, output]).then(([code]) => code),
     kill: (signal) => child.kill(signal),
   };
 }
@@ -67,13 +109,26 @@ async function dependenciesAreHealthy(options: SupervisorOptions): Promise<boole
   const timeout = options.dependencyTimeoutMs ?? 30_000;
   const interval = Math.max(1, options.pollIntervalMs ?? 250);
   const sleep = options.sleep ?? ((milliseconds) => Bun.sleep(milliseconds));
+  const now = options.now ?? (() => performance.now());
+  const deadline = now() + timeout;
 
   for (const dependency of options.dependencies ?? []) {
-    let waited = 0;
-    while (!(await dependency.check())) {
-      if (waited >= timeout) return false;
-      await sleep(Math.min(interval, timeout - waited));
-      waited += interval;
+    while (true) {
+      const remaining = deadline - now();
+      if (remaining <= 0) return false;
+      const timeoutMarker = Symbol('dependency-timeout');
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        dependency.check(),
+        new Promise<typeof timeoutMarker>((resolve) => {
+          timer = setTimeout(() => resolve(timeoutMarker), remaining);
+        }),
+      ]).finally(() => { if (timer) clearTimeout(timer); });
+      if (result === timeoutMarker) return false;
+      if (result) break;
+      const afterCheck = deadline - now();
+      if (afterCheck <= 0) return false;
+      await sleep(Math.min(interval, afterCheck));
     }
   }
   return true;
@@ -95,7 +150,7 @@ export async function superviseProcesses(options: SupervisorOptions): Promise<nu
 
   const running: Array<{ spec: ChildProcessSpec; handle: ChildProcessHandle }> = [];
   try {
-    for (const spec of options.children) running.push({ spec, handle: (options.spawn ?? defaultSpawn)(spec) });
+    for (const spec of options.children) running.push({ spec, handle: (options.spawn ?? spawnRedactedChild)(spec) });
   } catch (error) {
     log(redactSensitive(`Unable to start a required process: ${errorText(error)}`, environments));
     for (const child of running) child.handle.kill('SIGTERM');

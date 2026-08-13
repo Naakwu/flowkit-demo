@@ -20,6 +20,7 @@
     "build": "tsc -p tsconfig.build.json && bun run build:web",
     "build:web": "bun run --cwd apps/web build",
     "stack:up": "docker compose -p flowkit_demo -f docker-compose.yml up -d --wait",
+    "stack:ci": "bun run scripts/stack-ci.ts",
     "stack:down": "docker compose -p flowkit_demo -f docker-compose.yml down",
     "stack:reset": "bun run scripts/reset-stack.ts"
   },
