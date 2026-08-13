@@ -12,6 +12,8 @@ const ROOT = resolve(import.meta.dir, '..');
 const CI_DATABASE_URL = 'postgresql://flowkit_demo:flowkit_demo@127.0.0.1:5441/flowkit_demo';
 
 interface CommandStep { command: readonly string[] }
+type CancelTimer = () => void;
+type Schedule = (callback: () => void, milliseconds: number) => CancelTimer;
 export interface CiStackPlan {
   environment: Record<string, string | undefined>;
   setup: readonly CommandStep[];
@@ -84,18 +86,94 @@ async function run(step: CommandStep, environment: Record<string, string | undef
   if (code !== 0) throw new Error(`${step.command[0]} command failed with exit code ${code}.`);
 }
 
-async function waitFor(url: string, children: readonly ChildProcessHandle[]): Promise<void> {
-  const deadline = performance.now() + 60_000;
-  while (performance.now() < deadline) {
-    const childExited = await Promise.race(children.map(async (child) => {
-      await child.exited;
-      return true;
-    }).concat([Bun.sleep(0).then(() => false)]));
-    if (childExited) throw new Error('A required CI application exited before readiness.');
-    try { if ((await fetch(url)).ok) return; } catch { /* retry within the monotonic deadline */ }
-    await Bun.sleep(250);
+interface ReadinessOptions {
+  url: string;
+  children: readonly ChildProcessHandle[];
+  timeoutMs?: number;
+  now?: () => number;
+  fetch?: (url: string, init: { signal: AbortSignal }) => Promise<{ ok: boolean }>;
+  schedule?: Schedule;
+  sleep?: (milliseconds: number) => Promise<void>;
+}
+
+const scheduleTimer: Schedule = (callback, milliseconds) => {
+  const timer = setTimeout(callback, milliseconds);
+  return () => clearTimeout(timer);
+};
+
+export async function waitForCiReadiness(options: ReadinessOptions): Promise<void> {
+  const now = options.now ?? (() => performance.now());
+  const fetchProbe = options.fetch ?? ((url, init) => fetch(url, init));
+  const schedule = options.schedule ?? scheduleTimer;
+  const sleep = options.sleep ?? ((milliseconds) => Bun.sleep(milliseconds));
+  const deadline = now() + (options.timeoutMs ?? 60_000);
+
+  while (true) {
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+
+    const controller = new AbortController();
+    let cancelTimer: CancelTimer = () => {};
+    const probe = fetchProbe(options.url, { signal: controller.signal }).then(
+      (response) => ({ type: 'response' as const, ok: response.ok }),
+      () => ({ type: 'retry' as const }),
+    );
+    const timeout = new Promise<{ type: 'timeout' }>((resolve) => {
+      cancelTimer = schedule(() => {
+        controller.abort();
+        resolve({ type: 'timeout' });
+      }, remaining);
+    });
+    const childExits = options.children.map((child) => child.exited.then(() => ({ type: 'child-exit' as const })));
+    const outcome = await Promise.race([probe, timeout, ...childExits]);
+    cancelTimer();
+
+    if (outcome.type === 'response' && outcome.ok) return;
+    if (outcome.type === 'child-exit') throw new Error('A required CI application exited before readiness.');
+    if (outcome.type === 'timeout') break;
+    await sleep(Math.min(250, Math.max(0, deadline - now())));
   }
-  throw new Error(`CI application did not become ready: ${url}`);
+  throw new Error(`CI application did not become ready: ${options.url}`);
+}
+
+interface CleanupOptions {
+  graceMs?: number;
+  schedule?: Schedule;
+}
+
+async function stopCiChildren(children: readonly ChildProcessHandle[], options: CleanupOptions): Promise<void> {
+  for (const child of children) {
+    try { child.kill('SIGTERM'); } catch { /* an already-exited child needs no signal */ }
+  }
+  if (children.length === 0) return;
+
+  const schedule = options.schedule ?? scheduleTimer;
+  let cancelTimer: CancelTimer = () => {};
+  const timeout = new Promise<'timeout'>((resolve) => {
+    cancelTimer = schedule(() => resolve('timeout'), options.graceMs ?? 5_000);
+  });
+  const outcome = await Promise.race([
+    Promise.allSettled(children.map((child) => child.exited)).then(() => 'exited' as const),
+    timeout,
+  ]);
+  cancelTimer();
+  if (outcome === 'timeout') {
+    for (const child of children) {
+      try { child.kill('SIGKILL'); } catch { /* teardown must continue regardless */ }
+    }
+  }
+}
+
+export async function cleanupCiStack(
+  children: readonly ChildProcessHandle[],
+  teardown: () => Promise<void>,
+  options: CleanupOptions = {},
+): Promise<void> {
+  try {
+    await stopCiChildren(children, options);
+  } finally {
+    await teardown();
+  }
 }
 
 async function main(): Promise<void> {
@@ -109,14 +187,12 @@ async function main(): Promise<void> {
     await run(plan.setup[2]!, plan.environment);
     for (const spec of plan.children) children.push(spawnRedactedChild(spec));
     await Promise.all([
-      waitFor('http://127.0.0.1:3011/health/ready', children),
-      waitFor('http://127.0.0.1:5173/', children),
+      waitForCiReadiness({ url: 'http://127.0.0.1:3011/health/ready', children }),
+      waitForCiReadiness({ url: 'http://127.0.0.1:5173/', children }),
     ]);
     await run(plan.verify, plan.environment);
   } finally {
-    for (const child of children) child.kill('SIGTERM');
-    await Promise.allSettled(children.map((child) => child.exited));
-    await run(plan.cleanup, plan.environment);
+    await cleanupCiStack(children, () => run(plan.cleanup, plan.environment));
   }
 }
 

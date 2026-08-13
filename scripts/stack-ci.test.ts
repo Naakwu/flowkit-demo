@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'bun:test';
 
-import { createCiStackPlan } from './stack-ci';
+import {
+  cleanupCiStack,
+  createCiStackPlan,
+  waitForCiReadiness,
+} from './stack-ci';
+import type { ChildProcessHandle, ProcessSignal } from './lib/process-supervisor';
+
+class HungChild implements ChildProcessHandle {
+  readonly exited = new Promise<number>(() => {});
+  readonly signals: ProcessSignal[] = [];
+  constructor(private readonly events: string[]) {}
+  kill(signal: ProcessSignal) {
+    this.signals.push(signal);
+    this.events.push(signal);
+  }
+}
 
 describe('createCiStackPlan', () => {
   it('builds the guarded disposable stack, migration, seed, browser, and cleanup path', () => {
@@ -34,5 +49,50 @@ describe('createCiStackPlan', () => {
     [{ CI: 'true', NODE_ENV: 'test', FLOWKIT_DEMO_CI_APPROVED: 'true', DATABASE_URL: 'postgresql://x:x@db.example.com/flowkit_demo' }, 'disposable loopback'],
   ] as const)('rejects an unsafe CI invocation', (environment, message) => {
     expect(() => createCiStackPlan(environment)).toThrow(message);
+  });
+});
+
+describe('bounded CI lifecycle', () => {
+  it('aborts a hung readiness fetch at the remaining monotonic deadline', async () => {
+    let now = 10;
+    let aborted = false;
+
+    await expect(waitForCiReadiness({
+      url: 'http://127.0.0.1:3011/health/ready',
+      children: [],
+      timeoutMs: 25,
+      now: () => now,
+      fetch: async (_url, init) => new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          aborted = true;
+          reject(new Error('aborted'));
+        });
+      }),
+      schedule: (callback, milliseconds) => {
+        now += milliseconds;
+        callback();
+        return () => {};
+      },
+      sleep: async () => {},
+    })).rejects.toThrow('did not become ready');
+
+    expect(aborted).toBe(true);
+    expect(now).toBe(35);
+  });
+
+  it('escalates a hung child and still tears down Compose in order', async () => {
+    const events: string[] = [];
+    const child = new HungChild(events);
+
+    await cleanupCiStack([child], async () => { events.push('compose-down'); }, {
+      graceMs: 20,
+      schedule: (callback) => {
+        callback();
+        return () => {};
+      },
+    });
+
+    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(events).toEqual(['SIGTERM', 'SIGKILL', 'compose-down']);
   });
 });
