@@ -28,7 +28,8 @@ services:
   migration:
     build:
       context: ../..
-      dockerfile: deploy/docker/app.Dockerfile
+      dockerfile: Dockerfile
+      secrets: [npmrc]
     environment:
       NODE_ENV: development
       FLOWKIT_DEMO_ALLOW_SEED: "true"
@@ -40,7 +41,8 @@ services:
   seed:
     build:
       context: ../..
-      dockerfile: deploy/docker/app.Dockerfile
+      dockerfile: Dockerfile
+      secrets: [npmrc]
     environment:
       NODE_ENV: development
       FLOWKIT_DEMO_ALLOW_SEED: "true"
@@ -51,7 +53,8 @@ services:
   api:
     build:
       context: ../..
-      dockerfile: deploy/docker/app.Dockerfile
+      dockerfile: Dockerfile
+      secrets: [npmrc]
     environment:
       NODE_ENV: development
       FLOWKIT_DEMO_ALLOW_SEED: "true"
@@ -70,12 +73,14 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/web.Dockerfile
+      secrets: [npmrc]
     depends_on: { api: { condition: service_started } }
     ports: ["${FLOWKIT_DEMO_WEB_PORT:-3012}:8080"]
   worker:
     build:
       context: ../..
-      dockerfile: deploy/docker/app.Dockerfile
+      dockerfile: Dockerfile
+      secrets: [npmrc]
     environment:
       NODE_ENV: development
       FLOWKIT_DEMO_PERSISTENCE: "true"
@@ -89,7 +94,8 @@ services:
   notify:
     build:
       context: ../..
-      dockerfile: deploy/docker/app.Dockerfile
+      dockerfile: Dockerfile
+      secrets: [npmrc]
     environment:
       NODE_ENV: development
       FLOWKIT_DEMO_PERSISTENCE: "true"
@@ -102,3 +108,7 @@ services:
     command: ["bun", "run", "apps/notify-worker/src/delivery.worker.ts"]
 volumes:
   flowkit_demo_postgres:
+
+secrets:
+  npmrc:
+    file: ${FLOWKIT_NPMRC_PATH:-../../.npmrc}

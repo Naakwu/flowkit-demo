@@ -18,7 +18,7 @@ fi
 
 namespace="${FLOWKIT_K3S_NAMESPACE:-flowkit-demo-dev}"
 database_url="${DATABASE_URL:-postgresql://flowkit_demo:flowkit_demo@postgres:5432/flowkit_demo}"
-migration_approved="${FLOWKIT_DEMO_MIGRATION_APPROVED:-true}"
+migration_approved="${FLOWKIT_DEMO_MIGRATION_APPROVED:-false}"
 
 if [[ "${#BETTER_AUTH_SECRET}" -lt 32 ]]; then
   echo "BETTER_AUTH_SECRET must be at least 32 characters." >&2

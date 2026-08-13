@@ -11,6 +11,7 @@ def configure_flowkit_k3s():
     target_platform = os.getenv('K3S_PLATFORM', 'linux/amd64')
     upsert_timeout_secs = int(os.getenv('FLOWKIT_K3S_UPSERT_TIMEOUT_SECS', '300'))
     cert_manager_enabled = os.getenv('FLOWKIT_K3S_CERT_MANAGER_ENABLED', 'false') == 'true'
+    npmrc_path = os.getenv('FLOWKIT_NPMRC_PATH', os.getenv('HOME', '') + '/.npmrc')
 
     allow_k8s_contexts(os.getenv('K3S_TILT_CONTEXT', 'default'))
     update_settings(
@@ -27,8 +28,9 @@ def configure_flowkit_k3s():
     docker_build(
         registry + '/flowkit-demo',
         '.',
-        dockerfile='deploy/docker/app.Dockerfile',
+        dockerfile='Dockerfile',
         platform=target_platform,
+        secret=['id=npmrc,src=%s' % npmrc_path],
     )
 
     local_resource(

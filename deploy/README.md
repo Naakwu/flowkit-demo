@@ -13,6 +13,11 @@ The hosted registry and k3s are used only when explicitly selecting the opt-in
 mode `TILT_MODE=flowkit-k3s` documented below. The legacy `TILT_MODE=k3s`
 mode is retired and no longer selects a working workflow.
 
+All application and web image dependency installs receive GitHub Packages
+credentials as an ephemeral BuildKit `npmrc` secret. The credential is never a
+build argument or image layer. Set `FLOWKIT_NPMRC_PATH` when the authenticated
+file is not `$HOME/.npmrc`; Compose and Tilt pass only that file as the secret.
+
 ## FlowKit demo mode
 
 `TILT_MODE=flowkit-k3s` runs the FlowKit demo against k3s instead of the
@@ -26,8 +31,8 @@ export FLOWKIT_K3S_REGISTRY=docker.pigstycoders.com/flowkit-demo-dev
 tilt up
 ```
 
-It builds only the `flowkit-demo` image (from
-`deploy/docker/app.Dockerfile`), applies the Kustomize stack, and installs
+It builds only the `flowkit-demo` image (from the repository-root
+`Dockerfile`), applies the Kustomize stack, and installs
 Temporal from the upstream Helm chart in the `flowkit-demo-dev` namespace. The
 target hostname family is:
 
@@ -67,7 +72,9 @@ cp deploy/k8s/examples/secrets.env.example deploy/k8s/examples/secrets.env
 
 The bootstrap script loads `deploy/k8s/examples/secrets.env` automatically when
 it exists. Override the path with `FLOWKIT_K3S_ENV_FILE=/path/to/file`, or export
-variables directly in your shell.
+variables directly in your shell. The committed example intentionally contains
+no values. Set `FLOWKIT_DEMO_MIGRATION_APPROVED=true` only for the explicit
+migration run, then return it to `false`.
 
 If Tilt reports `namespaces "flowkit-demo-dev" not found`, stop Tilt, run the
 bootstrap script above, then start `TILT_MODE=flowkit-k3s tilt up` again.
