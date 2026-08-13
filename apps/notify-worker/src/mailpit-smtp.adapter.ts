@@ -26,7 +26,7 @@ type NodemailerModule = {
 };
 
 const nodemailer = require('nodemailer') as NodemailerModule;
-const deliveryKey = (scope: TenantScope, dedupeKey: string) => `${scope.organizationId}:${dedupeKey}`;
+const deliveryKey = (scope: TenantScope, dedupeKey: string) => JSON.stringify([scope.organizationId, dedupeKey]);
 const messageIdFor = (scope: TenantScope, dedupeKey: string) => `<${createHash('sha256').update(deliveryKey(scope, dedupeKey)).digest('hex')}@flowkit-demo.local>`;
 
 /**

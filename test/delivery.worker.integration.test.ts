@@ -64,6 +64,24 @@ describe('Mailpit SMTP adapter', () => {
     expect(transport.sent).toHaveLength(2);
     expect(new Set(transport.sent.map((message) => message.messageId)).size).toBe(2);
   });
+
+  it('does not collide when organization and dedupe keys contain the separator', async () => {
+    const transport = new RecordingSmtpTransport();
+    const adapter = new MailpitSmtpAdapter({ transport });
+    const envelope = approvedLeaveEnvelopes[1]!;
+
+    await adapter.send({ organizationId: 'a' }, {
+      envelope: { ...envelope, dedupeKey: 'b:c' },
+      attemptId: 'first-attempt',
+    });
+    await adapter.send({ organizationId: 'a:b' }, {
+      envelope: { ...envelope, dedupeKey: 'c' },
+      attemptId: 'second-attempt',
+    });
+
+    expect(transport.sent).toHaveLength(2);
+    expect(new Set(transport.sent.map((message) => message.messageId)).size).toBe(2);
+  });
 });
 
 const sql = await durableTestDatabase('delivery worker', ['notification_outbox', 'notification_inbox', 'demo_runtime_state']);
