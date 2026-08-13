@@ -1,11 +1,11 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 
-import { DemoSessionGuard } from './auth/demo-session.guard';
+import { OrganizationContextGuard } from './auth/auth.module';
 import { loadConfig } from '@flowkit-demo/domain';
 import { RuntimeHealthRepository } from '@flowkit-demo/database';
 
 @Controller('runtime')
-@UseGuards(DemoSessionGuard)
+@UseGuards(OrganizationContextGuard)
 export class RuntimeController {
   constructor(private readonly health: RuntimeHealthRepository) {}
 

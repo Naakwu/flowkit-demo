@@ -1,3 +1,4 @@
+export * from './auth.schema';
 export * from './client';
 export * from './leave-flow.repository';
 export * from './postgres-inbox.adapter';

@@ -6,7 +6,7 @@ import { ZodError } from 'zod';
 import type { AuthenticatedPrincipal } from '@naakwu/flowkit-auth';
 import type { FlowkitConsumerView } from '@naakwu/flowkit-consumer';
 
-import { DemoSessionGuard } from './auth/demo-session.guard';
+import { OrganizationContextGuard } from './auth/auth.module';
 import type { LeaveRequestRow } from '@flowkit-demo/database';
 import { FlowkitDemoConsumer, newLeaveFlowId } from './flow/flowkit-demo.consumer';
 import { leaveRequestSchema } from '@flowkit-demo/domain';
@@ -17,7 +17,7 @@ type ActionBody = { action?: unknown; comment?: unknown };
 const supportedActions = new Set(['submit', 'withdraw', 'approve', 'reject', 'return']);
 
 @Controller('flows')
-@UseGuards(DemoSessionGuard)
+@UseGuards(OrganizationContextGuard)
 export class FlowController {
   constructor(private readonly consumer: FlowkitDemoConsumer) {}
 

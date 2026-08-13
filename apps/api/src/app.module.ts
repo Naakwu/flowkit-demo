@@ -1,10 +1,9 @@
 import { Module } from '@nestjs/common';
 
-import { DemoSessionGuard } from './auth/demo-session.guard';
 import { createDemoDatabaseClient } from '@flowkit-demo/database';
 import { RuntimeHealthRepository } from '@flowkit-demo/database';
 import { FlowkitDemoConsumer } from './flow/flowkit-demo.consumer';
-import { AuthModule } from './auth.module';
+import { AuthModule } from './auth/auth.module';
 import { FlowController } from './flow.controller';
 import { HealthController, READINESS_PROBE } from './health.controller';
 import { type ReadinessProbe } from './health.responses';
@@ -23,6 +22,6 @@ const readinessProbeProvider = {
 @Module({
   imports: [AuthModule],
   controllers: [HealthController, FlowController, TasksController, NotificationsController, RuntimeController],
-  providers: [FlowkitDemoConsumer, RuntimeHealthRepository, DemoSessionGuard, readinessProbeProvider],
+  providers: [FlowkitDemoConsumer, RuntimeHealthRepository, readinessProbeProvider],
 })
 export class AppModule {}

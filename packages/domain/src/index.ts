@@ -7,3 +7,4 @@ export * from './leave/leave.types';
 export * from './leave/workflow-type';
 export * from './notifications/recipients';
 export * from './notifications/templates';
+export * from './roles';

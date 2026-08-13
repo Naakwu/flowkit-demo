@@ -3,13 +3,14 @@ import { NestFactory } from '@nestjs/core';
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import type { AuthenticatedPrincipal } from '@naakwu/flowkit-auth';
 
-import { DemoAuthController } from '../apps/api/src/auth.module';
 import { FlowController } from '../apps/api/src/flow.controller';
 import { NotificationsController } from '../apps/api/src/notifications.controller';
 import { RuntimeController } from '../apps/api/src/runtime.controller';
 import { TasksController } from '../apps/api/src/tasks.controller';
-import { DemoSessionGuard } from '../apps/api/src/auth/demo-session.guard';
-import { DemoSessionService } from '../apps/api/src/auth/demo-session.service';
+import {
+  ORGANIZATION_CONTEXT_PROVIDER,
+  OrganizationContextGuard,
+} from '../apps/api/src/auth/auth.module';
 import { principal } from '@flowkit-demo/domain';
 import { RuntimeHealthRepository } from '@flowkit-demo/database';
 import { FlowkitDemoConsumer } from '../apps/api/src/flow/flowkit-demo.consumer';
@@ -35,16 +36,11 @@ const identities = new Map<string, AuthenticatedPrincipal>([
   ['manager-2', principal('manager-2', 'manager')],
 ]);
 
-class FakeSessions {
-  async create(userId: string) {
+class FakeOrganizationContextProvider {
+  async resolve(headers: Headers) {
+    const userId = headers.get('authorization')?.replace(/^Bearer test-/, '') ?? '';
     const current = identities.get(userId);
-    if (!current) throw new Error('user_not_found');
-    return { token: `signed-${userId}`, principal: current };
-  }
-
-  async verify(token: string) {
-    const userId = token.replace(/^signed-/, '');
-    return identities.get(userId) ?? null;
+    return current ? { organizationId: 'acme', userId, principal: current } : null;
   }
 }
 
@@ -121,15 +117,12 @@ async function request(baseUrl: string, path: string, options: RequestInit = {})
 }
 
 async function login(baseUrl: string, userId: string): Promise<RequestClient> {
-  const { response } = await request(baseUrl, '/auth/login', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ userId }),
-  });
-  const cookie = response.headers.get('set-cookie')?.split(';')[0];
-  if (!cookie) throw new Error('login did not establish a session cookie');
+  if (!identities.has(userId)) throw new Error('test user not found');
+  const authorization = `Bearer test-${userId}`;
   return {
-    get: async (path) => (await request(baseUrl, path, { headers: { cookie } })).payload,
+    get: async (path) => (await request(baseUrl, path, { headers: { authorization } })).payload,
     post: async (path, body, headers = {}) => (await request(baseUrl, path, {
-      method: 'POST', headers: { 'content-type': 'application/json', cookie, ...headers }, body: body === undefined ? undefined : JSON.stringify(body),
+      method: 'POST', headers: { 'content-type': 'application/json', authorization, ...headers }, body: body === undefined ? undefined : JSON.stringify(body),
     })).payload,
   };
 }
@@ -182,14 +175,13 @@ async function startTestApplication(
 
 async function createTestApplication(): Promise<TestApplication> {
   const consumer = new FakeConsumer();
-  const sessions = new FakeSessions();
   class TestModule {}
   Module({
-    controllers: [DemoAuthController, FlowController, TasksController, NotificationsController, RuntimeController],
+    controllers: [FlowController, TasksController, NotificationsController, RuntimeController],
     providers: [
       { provide: FlowkitDemoConsumer, useValue: consumer },
-      { provide: DemoSessionService, useValue: sessions },
-      DemoSessionGuard,
+      { provide: ORGANIZATION_CONTEXT_PROVIDER, useValue: new FakeOrganizationContextProvider() },
+      OrganizationContextGuard,
       { provide: RuntimeHealthRepository, useValue: new FakeRuntimeHealth() },
     ],
   })(TestModule);
@@ -207,7 +199,7 @@ beforeAll(async () => {
 
 afterAll(async () => { await app.close(); });
 
-describe('Flowkit API sessions and role paths', () => {
+describe('Flowkit API organization context and role paths', () => {
   it('rebuilds the Nest fixture after a real address collision', async () => {
     const blockedPort = Number(new URL(baseUrl).port);
     const createdApps: TestApplication[] = [];
@@ -229,7 +221,7 @@ describe('Flowkit API sessions and role paths', () => {
     }
   });
 
-  it('returns Flowkit activity and durable inbox views for a signed session', async () => {
+  it('returns Flowkit activity and durable inbox views for an authenticated organization member', async () => {
     const employee = await login(baseUrl, 'employee-1');
     const { id } = await employee.post('/flows', fiveDayLeave);
     const flow = await employee.get(`/flows/${id}`) as any;
@@ -284,10 +276,9 @@ describe('Flowkit API sessions and role paths', () => {
     });
   });
 
-  it('rejects requests without a valid signed session cookie', async () => {
+  it('rejects requests without recognized authentication credentials', async () => {
     await expect(request(baseUrl, '/tasks')).rejects.toMatchObject({ status: 401 });
-    await expect(request(baseUrl, '/tasks', { headers: { cookie: 'flowkit_demo_session=tampered' } })).rejects.toMatchObject({ status: 401 });
-    await expect(request(baseUrl, '/tasks', { headers: { cookie: 'flowkit_demo_session=%E0%A4%A' } })).rejects.toMatchObject({ status: 401 });
+    await expect(request(baseUrl, '/tasks', { headers: { authorization: 'Bearer forged-user' } })).rejects.toMatchObject({ status: 401 });
   });
 
   it('reports worker heartbeats separately from API observation time', async () => {

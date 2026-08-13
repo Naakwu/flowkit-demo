@@ -15,7 +15,7 @@ export function principal(id: string, role: keyof typeof roleRegistry.definition
   return freezePrincipal({ authUserId: id, subjectId: id, role, permissions: roleRegistry.definitions[role].permissions, readOnly: roleRegistry.isReadOnly(role), identityProofs: [], session: { id: `session-${id}`, issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString() } });
 }
 
-/** Resolves only the demo identities seeded by this application; request roles are never authoritative. */
+/** Resolves only the seeded workflow identities; HTTP authentication never calls this adapter. */
 export async function resolveDemoActor(id: string): Promise<FlowkitActorRef> {
   const role = canonicalRoles[id as keyof typeof canonicalRoles];
   if (!role) throw new Error('actor_not_found');
