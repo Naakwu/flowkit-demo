@@ -46,8 +46,8 @@ export class LeaveService {
     const flowId = `flow-${id}`;
     const state = await this.consumer.start(this.scope, {
       flowId,
-      subject: { id, metadata: request },
-      actor: { id: employeeId, roles: ['employee'] },
+      subject: { id, organizationId: this.scope.organizationId, metadata: request },
+      actor: { id: employeeId, roles: ['employee'], organizationId: this.scope.organizationId },
       operationId: `${id}:start`,
     });
     return { ...request, id, flowId, state: state.state, sequence: state.sequence, history: [] };
@@ -81,7 +81,7 @@ export class LeaveService {
       flowId: request.flow_id,
       action: command.action,
       comment: command.comment,
-      actor,
+      actor: { ...actor, organizationId: this.scope.organizationId },
       operationId: `${request.flow_id}:${command.action}:${Date.now()}`,
     });
     const result = await this.get(id);

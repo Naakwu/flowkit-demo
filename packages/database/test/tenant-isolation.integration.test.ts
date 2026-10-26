@@ -176,7 +176,7 @@ durableTests('bidirectional tenant isolation', () => {
     const before = await repository.getRequest(globex, 'globex-leave');
     await expect(repository.recordTransition(acme, {
       workflowId: 'shared-flow', runId: 'guessed-run', operationId: 'guessed-operation', sequence: 1, origin: 'human',
-      definition: { id: 'leave-approval', version: 1, hash: 'sha256:test' }, subject: { id: 'globex-leave', metadata: {} },
+      definition: { id: 'leave-approval', version: 1, hash: 'sha256:test' }, subject: { id: 'globex-leave', organizationId: 'acme-demo', metadata: {} },
       command: { action: 'approve', actorId: 'acme-manager' },
       previousState: { stage: 'manager_review', status: 'active', pendingRole: 'manager', tracks: {} },
       nextState: { stage: 'approved', status: 'completed', pendingRole: null, tracks: {} },

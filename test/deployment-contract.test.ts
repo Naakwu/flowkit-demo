@@ -73,9 +73,13 @@ async function resolveLocalImport(
 async function runtimeDependencyClosure(entries: readonly string[]): Promise<Set<string>> {
   const workspaceExports = new Map<string, string>();
   for (const packageJsonPath of (await filesBelow('packages')).filter((path) => path.endsWith('/package.json'))) {
-    const manifest = JSON.parse(await readFile(packageJsonPath, 'utf8')) as { name: string; exports?: string };
-    if (typeof manifest.exports === 'string') {
-      workspaceExports.set(manifest.name, relative(root, resolve(dirname(packageJsonPath), manifest.exports)));
+    const manifest = JSON.parse(await readFile(packageJsonPath, 'utf8')) as {
+      name: string;
+      exports?: string | Record<string, string>;
+    };
+    const rootExport = typeof manifest.exports === 'string' ? manifest.exports : manifest.exports?.['.'];
+    if (typeof rootExport === 'string') {
+      workspaceExports.set(manifest.name, relative(root, resolve(dirname(packageJsonPath), rootExport)));
     }
   }
 

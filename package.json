@@ -14,6 +14,7 @@
     "db:seed": "bun run packages/database/scripts/seed.ts",
     "scenario": "bun run apps/api/scripts/run-scenario.ts",
     "test": "bun test ./test/",
+    "test:enrolment-conformance": "bun test test/enrolment-conformance.test.ts",
     "test:integration": "bun test test/*.integration.test.ts",
     "test:browser": "playwright test -c playwright.config.ts",
     "typecheck": "tsc --noEmit",
