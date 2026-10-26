@@ -32,8 +32,8 @@ export class FlowController {
       const flowId = `flow-${id}`;
       const state = await this.consumer.start(req.organizationContext, {
         flowId,
-        subject: { id, metadata: request },
-        actor: { id: current.subjectId, roles: [current.role] },
+        subject: { id, organizationId: req.organizationContext.organizationId, metadata: request },
+        actor: { id: current.subjectId, roles: [current.role], organizationId: req.organizationContext.organizationId },
         operationId: `${id}:start:${randomUUID()}`,
       });
       return await this.project(req.organizationContext, id, state);
@@ -84,7 +84,7 @@ export class FlowController {
         flowId: request.flow_id,
         action: body.action,
         comment: body.comment,
-        actor: { id: req.principal.subjectId, roles: [req.principal.role] },
+        actor: { id: req.principal.subjectId, roles: [req.principal.role], organizationId: req.organizationContext.organizationId },
         operationId: `${request.flow_id}:${body.action}:${randomUUID()}`,
       });
     } catch (error) {

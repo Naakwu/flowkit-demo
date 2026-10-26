@@ -1,7 +1,7 @@
 import { buildInitialState, type FlowDefinition, type FlowState } from '@naakwu/flowkit-core';
 import { planNotification, NotificationAdapterRegistry, testAdapter, type NotificationDeliveryEnvelope } from '@naakwu/flowkit-notify';
 import { planTaskProjection } from '@naakwu/flowkit-tasks';
-import type { DispatchNotificationInput, RecordStageReadyInput, RecordTransitionInput, RecordTransitionOutput } from '@naakwu/flowkit-temporal';
+import type { DispatchNotificationInput, FlowkitNotificationBinding, RecordStageReadyInput, RecordTransitionInput, RecordTransitionOutput } from '@naakwu/flowkit-temporal';
 import type { Sql, TransactionSql } from 'postgres';
 
 import { leaveDefinition } from '@flowkit-demo/domain';
@@ -283,18 +283,32 @@ export class LeaveFlowRepository {
   }
 
   private async notificationEnvelopes(input: RecordTransitionInput, request: LeaveRequestRow): Promise<NotificationDeliveryEnvelope[]> {
-    if (!input.notify) return [];
-    const recipientId = input.notify.to?.includes('manager') ? request.manager_id : request.employee_id;
-    const plan = await planNotification({
-      namespace: 'flowkit-demo', sourceKey: `flowkit:${input.workflowId}:${input.operationId}`,
-      aggregate: { type: 'leave', id: input.subject.id }, templateKey: input.notify.template,
-      data: { requestId: input.subject.id, stage: input.nextState.stage, employeeName: request.employee_id },
-      channels: input.notify.channels,
-      explicitRecipients: [{ key: recipientId, routes: input.notify.channels.map((channel) => ({
-        channel, canonicalKey: recipientId,
-        address: channel === 'email' ? `${recipientId}@example.test` : recipientId,
-      })) }],
-    }, { templates: notificationTemplates, adapters: this.adapters.values() });
-    return plan.envelopes;
+    const bindings: FlowkitNotificationBinding[] = input.notifications?.length
+      ? input.notifications
+      : input.notify ? [input.notify] : [];
+    const envelopes: NotificationDeliveryEnvelope[] = [];
+
+    for (const [index, notification] of bindings.entries()) {
+      const recipientIds = notification.to?.flatMap((role) => {
+        if (role === 'manager') return [request.manager_id];
+        if (role === 'employee') return [request.employee_id];
+        return [];
+      }) ?? [request.employee_id];
+      if (recipientIds.length === 0) continue;
+
+      const plan = await planNotification({
+        namespace: 'flowkit-demo',
+        sourceKey: `flowkit:${input.workflowId}:${input.operationId}${index > 0 ? `:${index}` : ''}`,
+        aggregate: { type: 'leave', id: input.subject.id }, templateKey: notification.template,
+        data: { requestId: input.subject.id, stage: input.nextState.stage, employeeName: request.employee_id },
+        channels: notification.channels,
+        explicitRecipients: recipientIds.map((recipientId) => ({ key: recipientId, routes: notification.channels.map((channel) => ({
+          channel, canonicalKey: recipientId,
+          address: channel === 'email' ? `${recipientId}@example.test` : recipientId,
+        })) })),
+      }, { templates: notificationTemplates, adapters: this.adapters.values() });
+      envelopes.push(...plan.envelopes);
+    }
+    return envelopes;
   }
 }

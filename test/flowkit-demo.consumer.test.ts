@@ -12,11 +12,12 @@ import { clearDurableLeaveServiceData, durableLeaveServiceDatabase } from './dur
 const sql = await durableLeaveServiceDatabase('Flowkit demo consumer');
 const durableTests = sql ? describe : describe.skip;
 const scope = { organizationId: 'acme-demo' };
-const employee = { id: 'employee-1', roles: ['employee'] };
-const manager1 = { id: 'manager-1', roles: ['manager'] };
-const manager2 = { id: 'manager-2', roles: ['manager'] };
+const employee = { id: 'employee-1', roles: ['employee'], organizationId: 'acme-demo' };
+const manager1 = { id: 'manager-1', roles: ['manager'], organizationId: 'acme-demo' };
+const manager2 = { id: 'manager-2', roles: ['manager'], organizationId: 'acme-demo' };
 const fiveDayLeave = {
   id: 'leave-1',
+  organizationId: 'acme-demo',
   metadata: {
     employeeId: employee.id,
     managerId: manager1.id,
@@ -83,4 +84,32 @@ durableTests('Flowkit demo consumer', () => {
       await environment.teardown();
     }
   }, 30_000);
+
+  it('binds the server tenant to the framework subject and runtime adapter', async () => {
+    const starts: unknown[] = [];
+    const repository = new LeaveFlowRepository({ sql: sql! });
+    const runtime = {
+      start: async (input: unknown) => { starts.push(input); return { ...stateForTest(), state: stateForTest().state }; },
+      act: async () => stateForTest(),
+      signal: async () => stateForTest(),
+      get: async () => stateForTest(),
+      health: async () => ({ ready: true, checkedAt: new Date().toISOString() }),
+    };
+    const consumer = createFlowkitDemoConsumer({ repository, runtime });
+
+    await consumer.start(scope, {
+      flowId: 'leave-scope-subject',
+      subject: { id: 'leave-scope-subject', organizationId: 'body-controlled', metadata: fiveDayLeave.metadata },
+      actor: { ...employee, organizationId: 'body-controlled' },
+      operationId: 'scope-start',
+    });
+    expect(starts[0]).toMatchObject({
+      subject: { id: 'leave-scope-subject', organizationId: 'acme-demo' },
+    });
+    expect(starts[0]).not.toMatchObject({ subject: { metadata: { organizationId: 'body-controlled' } } });
+  }, 30_000);
 });
+
+function stateForTest() {
+  return { state: { stage: 'employee_draft', status: 'draft', pendingRole: 'employee', tracks: {} }, sequence: 0, stepResults: {}, completed: false, nextActions: [] };
+}

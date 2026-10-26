@@ -45,7 +45,7 @@ function ruleTransition(id: string): RecordTransitionInput {
       version: leaveDefinition.version,
       hash: publishedLeaveDefinition.definitionHash,
     },
-    subject: { id, metadata: {} },
+    subject: { id, organizationId: 'acme-demo', metadata: {} },
     command: { action: 'submit', actorId: 'employee-1' },
     previousState: initial,
     nextState: evaluating,
@@ -102,5 +102,44 @@ durableTests('leave flow operation scope', () => {
     expect(await repository.findPriorResult(scope, input.workflowId, ruleOperationId)).toMatchObject({ created: false });
     const [count] = await sql!<Array<{ total: string }>>`SELECT count(*)::text AS total FROM leave_transitions`;
     expect(count!.total).toBe('1');
+  });
+
+  it('writes every action and stage-entry notification binding through the transition transaction', async () => {
+    const repository = new LeaveFlowRepository({ sql: sql! });
+    await seedRequest(repository, 'leave-notifications');
+
+    const input = ruleTransition('leave-notifications');
+    input.notifications = [
+      { template: 'leave.manager_review', channels: ['inbox'] },
+      { template: 'leave.rejected', channels: ['email'] },
+    ];
+    const result = await repository.recordTransition(scope, input);
+
+    expect(result).toMatchObject({ state: evaluating, created: true });
+    const rows = await sql!<Array<{ channel: string }>>`
+      SELECT channel FROM notification_outbox
+      WHERE organization_id = ${scope.organizationId}
+      ORDER BY channel
+    `;
+    expect(rows.map((row) => row.channel)).toEqual(['email', 'inbox']);
+  });
+
+  it('falls back to the legacy singular notification binding', async () => {
+    const repository = new LeaveFlowRepository({ sql: sql! });
+    await seedRequest(repository, 'leave-legacy-notify');
+
+    const input = ruleTransition('leave-legacy-notify');
+    input.notify = { template: 'leave.manager_review', channels: ['inbox'] };
+    const result = await repository.recordTransition(scope, input);
+
+    expect(result).toMatchObject({ state: evaluating, created: true });
+    const rows = await sql!<Array<{ template_key: string; channel: string }>>`
+      SELECT template_key, channel FROM notification_outbox
+      WHERE organization_id = ${scope.organizationId}
+      ORDER BY channel
+    `;
+    expect(rows.map((row) => ({ template_key: row.template_key, channel: row.channel }))).toEqual([
+      { template_key: 'leave.manager_review', channel: 'inbox' },
+    ]);
   });
 });

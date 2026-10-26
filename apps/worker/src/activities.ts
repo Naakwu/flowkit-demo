@@ -16,8 +16,8 @@ type LeaveActivityDependencies = {
   actorResolver?: FlowkitActorResolver;
 };
 
-function scopeFromSubject(subject: { metadata?: Record<string, unknown> }): TenantScope {
-  return requireTenantScope({ organizationId: typeof subject.metadata?.organizationId === 'string' ? subject.metadata.organizationId : '' });
+function scopeFromSubject(subject: { organizationId?: string; metadata?: Record<string, unknown> }): TenantScope {
+  return requireTenantScope({ organizationId: subject.organizationId ?? '' });
 }
 
 const outputForSystemStep = async (repository: LeaveFlowRepository, input: ExecuteSystemStepInput) => {
@@ -36,7 +36,7 @@ const outputForSystemStep = async (repository: LeaveFlowRepository, input: Execu
   }
 };
 
-function logicalWorkflowId(subject: { metadata?: Record<string, unknown> }, workflowId: string): string {
+function logicalWorkflowId(subject: { organizationId?: string; metadata?: Record<string, unknown> }, workflowId: string): string {
   const scope = scopeFromSubject(subject);
   return tenantFlowId(scope.organizationId, workflowId);
 }

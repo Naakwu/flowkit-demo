@@ -19,7 +19,7 @@ export class TasksController {
   @Get()
   async list(@Req() req: SessionRequest) {
     try {
-      return (await this.consumer.tasks(req.organizationContext).list({ actor: { id: req.principal.subjectId, roles: [req.principal.role] } })).items;
+      return (await this.consumer.tasks(req.organizationContext).list({ actor: { id: req.principal.subjectId, roles: [req.principal.role], organizationId: req.organizationContext.organizationId } })).items;
     } catch (error) {
       throw asFlowkitHttpException(error);
     }
@@ -38,7 +38,7 @@ export class TasksController {
       return await this.consumer.tasks(req.organizationContext).claim({
         taskId: task.id,
         expectedRevision,
-        actor: { id: req.principal.subjectId, roles: [req.principal.role] },
+        actor: { id: req.principal.subjectId, roles: [req.principal.role], organizationId: req.organizationContext.organizationId },
         operationId: `claim:${task.id}:${req.principal.subjectId}:${randomUUID()}`,
       });
     } catch (error) {

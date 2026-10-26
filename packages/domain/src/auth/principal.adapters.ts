@@ -21,5 +21,5 @@ export async function resolveDemoActor(id: string): Promise<FlowkitActorRef> {
   const role = seeded?.[2] as keyof typeof roleRegistry.definitions | undefined
     ?? canonicalRoles[id as keyof typeof canonicalRoles];
   if (!role) throw new Error('actor_not_found');
-  return { id, roles: [role], ...(seeded ? { organizationId: seeded[1] } : {}) };
+  return { id, roles: [role], organizationId: seeded?.[1] ?? 'acme-demo' };
 }
