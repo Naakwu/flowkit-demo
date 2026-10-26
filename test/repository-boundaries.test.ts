@@ -118,6 +118,7 @@ describe('repository boundaries', () => {
     };
 
     expect(rootManifest.dependencies?.express).toBeDefined();
+    expect(rootManifest.dependencies?.['@temporalio/workflow']).toBeDefined();
     expect(rootManifest.devDependencies?.['@types/express']).toBeDefined();
     expect(rootManifest.devDependencies?.['better-call']).toBeDefined();
     expect(uiManifest.devDependencies?.['@testing-library/user-event']).toBeDefined();

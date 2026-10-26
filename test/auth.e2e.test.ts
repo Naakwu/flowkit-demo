@@ -10,6 +10,7 @@ import { betterAuthSchema } from '@flowkit-demo/database';
 import { loadConfig } from '@flowkit-demo/domain';
 
 import { auth, createAuth } from '../apps/api/src/auth/auth.config';
+import { AppModule } from '../apps/api/src/app.module';
 import {
   BETTER_AUTH_INSTANCE,
   BetterAuthController,
@@ -36,6 +37,16 @@ function post(path: string, body: unknown) {
 }
 
 describe('BetterAuth HTTP boundary', () => {
+  it('resolves the production organization-context guard from AppModule', async () => {
+    const app = await NestFactory.create(AppModule, { logger: false });
+
+    try {
+      await app.init();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('does not expose the removed development identity-switcher login', async () => {
     const response = await post('/auth/login', { userId: 'manager-1' });
 

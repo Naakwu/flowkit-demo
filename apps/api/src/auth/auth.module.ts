@@ -91,6 +91,6 @@ export class OrganizationContextGuard implements CanActivate {
       }),
     },
   ],
-  exports: [OrganizationContextGuard],
+  exports: [OrganizationContextGuard, ORGANIZATION_CONTEXT_PROVIDER],
 })
 export class AuthModule {}

@@ -35,6 +35,8 @@ describe('createCiStackPlan', () => {
     expect(plan.verify.command.join(' ')).toBe('bun run test:browser');
     expect(plan.cleanup.command.join(' ')).toBe('docker compose -p flowkit_demo_ci -f docker-compose.yml down -v');
     expect(plan.environment.FLOWKIT_DEMO_MIGRATION_APPROVED).toBe('true');
+    expect(plan.environment.FLOWKIT_DEMO_URL).toBe('http://localhost:5173');
+    expect(plan.environment.BETTER_AUTH_URL).toBe('http://localhost:5173');
     expect(plan.environment.NODE_AUTH_TOKEN).toBeUndefined();
   });
 

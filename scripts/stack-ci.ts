@@ -50,13 +50,13 @@ export function createCiStackPlan(source: Record<string, string | undefined>): C
     FLOWKIT_DEMO_MIGRATION_APPROVED: 'true',
     FLOWKIT_DEMO_PERSISTENCE: 'true',
     FLOWKIT_DEMO_PORT: '3011',
-    FLOWKIT_DEMO_URL: 'http://127.0.0.1:5173',
+    FLOWKIT_DEMO_URL: 'http://localhost:5173',
     FLOWKIT_DEMO_MAILPIT_URL: 'http://127.0.0.1:8025',
     TEMPORAL_ADDRESS: '127.0.0.1:7233',
     TEMPORAL_NAMESPACE: 'flowkit-demo',
     TEMPORAL_TASK_QUEUE: 'flowkit-demo',
     BETTER_AUTH_SECRET: 'flowkit-demo-ci-secret-change-me-32-characters',
-    BETTER_AUTH_URL: 'http://127.0.0.1:5173',
+    BETTER_AUTH_URL: 'http://localhost:5173',
     SMTP_HOST: '127.0.0.1',
     SMTP_PORT: '1025',
     MAILPIT_URL: 'http://127.0.0.1:8025',
@@ -188,7 +188,7 @@ async function main(): Promise<void> {
     for (const spec of plan.children) children.push(spawnRedactedChild(spec));
     await Promise.all([
       waitForCiReadiness({ url: 'http://127.0.0.1:3011/health/ready', children }),
-      waitForCiReadiness({ url: 'http://127.0.0.1:5173/', children }),
+      waitForCiReadiness({ url: 'http://localhost:5173/', children }),
     ]);
     await run(plan.verify, plan.environment);
   } finally {

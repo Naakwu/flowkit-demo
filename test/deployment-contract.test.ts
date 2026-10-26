@@ -184,6 +184,12 @@ describe('deployment contract', () => {
     expect(compose.services.worker.depends_on?.['temporal-namespace']?.condition).toBe('service_completed_successfully');
   });
 
+  it('probes Temporal through its container address', async () => {
+    const compose = await text('docker-compose.yml');
+    expect(compose).toContain('"--address", "temporal:7233"');
+    expect(compose).not.toContain('"--address", "127.0.0.1:7233"');
+  });
+
   it('keeps the local Tilt path safe and the k3s path explicitly ordered', async () => {
     const rootTilt = await text('Tiltfile');
     const k3sTilt = await text('deploy/tilt/k3s.Tiltfile');
